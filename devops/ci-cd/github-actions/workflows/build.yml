@@ -1,0 +1,501 @@
+name: TigerEx CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Security and Code Quality Checks
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+    
+    - name: Run CodeQL Analysis
+      uses: github/codeql-action/init@v2
+      with:
+        languages: javascript, python, go, cpp
+    
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+
+  # Backend Services Build and Test
+  backend-matching-engine:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up C++ environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake libssl-dev libboost-all-dev
+    
+    - name: Build Matching Engine
+      run: |
+        cd backend/matching-engine
+        mkdir build && cd build
+        cmake ..
+        make -j$(nproc)
+    
+    - name: Run Tests
+      run: |
+        cd backend/matching-engine/build
+        ctest --output-on-failure
+    
+    - name: Build Docker Image
+      run: |
+        cd backend/matching-engine
+        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/matching-engine:${{ github.sha }} .
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Push Docker Image
+      run: |
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/matching-engine:${{ github.sha }}
+
+  backend-transaction-engine:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        components: rustfmt, clippy
+    
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          backend/transaction-engine/target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Run Rust tests
+      run: |
+        cd backend/transaction-engine
+        cargo test --verbose
+    
+    - name: Run Clippy
+      run: |
+        cd backend/transaction-engine
+        cargo clippy -- -D warnings
+    
+    - name: Check formatting
+      run: |
+        cd backend/transaction-engine
+        cargo fmt -- --check
+    
+    - name: Build Docker Image
+      run: |
+        cd backend/transaction-engine
+        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/transaction-engine:${{ github.sha }} .
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Push Docker Image
+      run: |
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/transaction-engine:${{ github.sha }}
+
+  backend-api-gateway:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    
+    - name: Run Go tests
+      run: |
+        cd backend/api-gateway
+        go test -v ./...
+    
+    - name: Run Go vet
+      run: |
+        cd backend/api-gateway
+        go vet ./...
+    
+    - name: Run staticcheck
+      uses: dominikh/staticcheck-action@v1.3.0
+      with:
+        version: "2023.1.3"
+        install-go: false
+        working-directory: backend/api-gateway
+    
+    - name: Build Docker Image
+      run: |
+        cd backend/api-gateway
+        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:${{ github.sha }} .
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Push Docker Image
+      run: |
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:${{ github.sha }}
+
+  backend-risk-management:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        cd backend/risk-management
+        pip install -r requirements.txt
+        pip install pytest pytest-cov black flake8 mypy
+    
+    - name: Run Black formatter check
+      run: |
+        cd backend/risk-management
+        black --check src/
+    
+    - name: Run Flake8 linter
+      run: |
+        cd backend/risk-management
+        flake8 src/
+    
+    - name: Run MyPy type checker
+      run: |
+        cd backend/risk-management
+        mypy src/
+    
+    - name: Run tests with coverage
+      run: |
+        cd backend/risk-management
+        pytest --cov=src/ --cov-report=xml
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/risk-management/coverage.xml
+        flags: risk-management
+    
+    - name: Build Docker Image
+      run: |
+        cd backend/risk-management
+        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/risk-management:${{ github.sha }} .
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Push Docker Image
+      run: |
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/risk-management:${{ github.sha }}
+
+  # Frontend Build and Test
+  frontend:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Run ESLint
+      run: |
+        cd frontend
+        npm run lint
+    
+    - name: Run Prettier check
+      run: |
+        cd frontend
+        npm run format:check
+    
+    - name: Run TypeScript check
+      run: |
+        cd frontend
+        npm run type-check
+    
+    - name: Run tests
+      run: |
+        cd frontend
+        npm run test:coverage
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./frontend/coverage/lcov.info
+        flags: frontend
+    
+    - name: Build application
+      run: |
+        cd frontend
+        npm run build
+    
+    - name: Build Docker Image
+      run: |
+        cd frontend
+        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.sha }} .
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Push Docker Image
+      run: |
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.sha }}
+
+  # Integration Tests
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: [backend-matching-engine, backend-transaction-engine, backend-api-gateway, backend-risk-management, frontend]
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: tigerex_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Compose
+      run: |
+        docker-compose -f devops/docker-compose.test.yml up -d
+    
+    - name: Wait for services to be ready
+      run: |
+        sleep 30
+        curl --retry 10 --retry-delay 5 --retry-connrefused http://localhost:8000/health
+    
+    - name: Run integration tests
+      run: |
+        cd tests/integration
+        npm install
+        npm run test
+    
+    - name: Cleanup
+      run: |
+        docker-compose -f devops/docker-compose.test.yml down
+
+  # Performance Tests
+  performance-tests:
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up K6
+      run: |
+        sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+        echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+        sudo apt-get update
+        sudo apt-get install k6
+    
+    - name: Run performance tests
+      run: |
+        cd tests/performance
+        k6 run --out json=results.json trading-load-test.js
+    
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-results
+        path: tests/performance/results.json
+
+  # Security Scanning
+  container-security-scan:
+    runs-on: ubuntu-latest
+    needs: [backend-matching-engine, backend-transaction-engine, backend-api-gateway, backend-risk-management, frontend]
+    strategy:
+      matrix:
+        image: [matching-engine, transaction-engine, api-gateway, risk-management, frontend]
+    steps:
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.image }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-${{ matrix.image }}.sarif'
+    
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-${{ matrix.image }}.sarif'
+
+  # Deploy to Staging
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [integration-tests, performance-tests, container-security-scan]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+    
+    - name: Configure kubectl
+      run: |
+        echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+    
+    - name: Deploy to staging
+      run: |
+        export KUBECONFIG=kubeconfig
+        sed -i 's/:latest/:${{ github.sha }}/g' devops/kubernetes/deployment.yaml
+        kubectl apply -f devops/kubernetes/deployment.yaml -n tigerex-staging
+        kubectl rollout status deployment/api-gateway -n tigerex-staging
+        kubectl rollout status deployment/matching-engine -n tigerex-staging
+        kubectl rollout status deployment/transaction-engine -n tigerex-staging
+        kubectl rollout status deployment/risk-management -n tigerex-staging
+        kubectl rollout status deployment/frontend -n tigerex-staging
+
+  # Deploy to Production
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [integration-tests, performance-tests, container-security-scan]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+    
+    - name: Configure kubectl
+      run: |
+        echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+    
+    - name: Deploy to production
+      run: |
+        export KUBECONFIG=kubeconfig
+        sed -i 's/:latest/:${{ github.sha }}/g' devops/kubernetes/deployment.yaml
+        kubectl apply -f devops/kubernetes/deployment.yaml -n tigerex-production
+        kubectl rollout status deployment/api-gateway -n tigerex-production
+        kubectl rollout status deployment/matching-engine -n tigerex-production
+        kubectl rollout status deployment/transaction-engine -n tigerex-production
+        kubectl rollout status deployment/risk-management -n tigerex-production
+        kubectl rollout status deployment/frontend -n tigerex-production
+    
+    - name: Run smoke tests
+      run: |
+        curl --fail https://api.tigerex.com/health
+        curl --fail https://app.tigerex.com
+    
+    - name: Notify deployment success
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        text: 'TigerEx production deployment successful! 🚀'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # Cleanup old images
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    steps:
+    - name: Delete old container images
+      uses: actions/delete-package-versions@v4
+      with:
+        package-name: ${{ env.IMAGE_NAME }}/matching-engine
+        package-type: container
+        min-versions-to-keep: 10
+        delete-only-untagged-versions: true
+      continue-on-error: true

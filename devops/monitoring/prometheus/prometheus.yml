@@ -1,0 +1,225 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'tigerex-production'
+    replica: 'prometheus-1'
+
+rule_files:
+  - "rules/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # TigerEx Core Services
+  - job_name: 'matching-engine'
+    static_configs:
+      - targets: ['matching-engine:8080']
+    metrics_path: /metrics
+    scrape_interval: 5s
+    scrape_timeout: 3s
+
+  - job_name: 'transaction-engine'
+    static_configs:
+      - targets: ['transaction-engine:8081']
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:8080']
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  - job_name: 'risk-management'
+    static_configs:
+      - targets: ['risk-management:8082']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: 'auth-service'
+    static_configs:
+      - targets: ['auth-service:8083']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Trading Services
+  - job_name: 'spot-trading'
+    static_configs:
+      - targets: ['spot-trading:8084']
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  - job_name: 'futures-trading-usd'
+    static_configs:
+      - targets: ['futures-trading-usd:8085']
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  - job_name: 'futures-trading-coin'
+    static_configs:
+      - targets: ['futures-trading-coin:8086']
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  # Infrastructure Services
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+    scrape_interval: 30s
+
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+
+  # Kubernetes metrics
+  - job_name: 'kubernetes-apiservers'
+    kubernetes_sd_configs:
+      - role: endpoints
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: default;kubernetes;https
+
+  - job_name: 'kubernetes-nodes'
+    kubernetes_sd_configs:
+      - role: node
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics
+
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_pod_label_(.+)
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: kubernetes_pod_name
+
+  # Custom application metrics
+  - job_name: 'trading-metrics'
+    static_configs:
+      - targets: ['matching-engine:8080']
+    metrics_path: /trading/metrics
+    scrape_interval: 5s
+    params:
+      format: ['prometheus']
+
+  # Blockchain node metrics
+  - job_name: 'bitcoin-node'
+    static_configs:
+      - targets: ['bitcoin-node:8332']
+    metrics_path: /metrics
+    scrape_interval: 60s
+
+  - job_name: 'ethereum-node'
+    static_configs:
+      - targets: ['ethereum-node:8545']
+    metrics_path: /debug/metrics/prometheus
+    scrape_interval: 60s
+
+  # External service monitoring
+  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - https://api.tigerex.com/health
+        - https://app.tigerex.com
+        - https://admin.tigerex.com
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # SSL certificate monitoring
+  - job_name: 'ssl-expiry'
+    metrics_path: /probe
+    params:
+      module: [ssl_expiry]
+    static_configs:
+      - targets:
+        - api.tigerex.com:443
+        - app.tigerex.com:443
+        - admin.tigerex.com:443
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+# Remote write configuration for long-term storage
+remote_write:
+  - url: "https://prometheus-remote-write.tigerex.com/api/v1/write"
+    basic_auth:
+      username: "tigerex"
+      password: "secure-password"
+    write_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'trading_.*|order_.*|balance_.*|risk_.*'
+        action: keep
+
+# Remote read configuration
+remote_read:
+  - url: "https://prometheus-remote-read.tigerex.com/api/v1/read"
+    basic_auth:
+      username: "tigerex"
+      password: "secure-password"
