@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  body {
+    @apply bg-gray-900 text-white;
+  }
+  
+  * {
+    @apply border-gray-700;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 inline-flex items-center justify-center;
+  }
+  
+  .btn-primary {
+    @apply bg-primary-500 text-white hover:bg-primary-600 focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+  }
+  
+  .btn-secondary {
+    @apply bg-secondary-500 text-white hover:bg-secondary-600 focus:ring-2 focus:ring-secondary-500 focus:ring-offset-2;
+  }
+  
+  .btn-bull {
+    @apply bg-bull text-white hover:bg-success-600 focus:ring-2 focus:ring-success-500 focus:ring-offset-2;
+  }
+  
+  .btn-bear {
+    @apply bg-bear text-white hover:bg-danger-600 focus:ring-2 focus:ring-danger-500 focus:ring-offset-2;
+  }
+  
+  .card {
+    @apply bg-gray-800 border border-gray-700 rounded-xl shadow-lg;
+  }
+  
+  .trading-panel {
+    @apply bg-gray-800/80 backdrop-blur-lg border border-gray-700 rounded-xl p-4;
+  }
+  
+  .price-cell {
+    @apply font-mono text-sm font-medium text-right px-2 py-1 transition-colors duration-300;
+  }
+  
+  .price-up {
+    @apply text-bull animate-price-up;
+  }
+  
+  .price-down {
+    @apply text-bear animate-price-down;
+  }
+  
+  .glass {
+    @apply bg-white/10 backdrop-blur-lg border border-white/20;
+  }
+  
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-gray-800 rounded-sm;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-gray-600 rounded-sm hover:bg-gray-500;
+  }
+}
+
+@layer utilities {
+  .text-bull {
+    @apply text-bull;
+  }
+  
+  .text-bear {
+    @apply text-bear;
+  }
+  
+  .bg-bull {
+    @apply bg-bull;
+  }
+  
+  .bg-bear {
+    @apply bg-bear;
+  }
+  
+  .gradient-trading {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  }
+  
+  .gradient-bull {
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  }
+  
+  .gradient-bear {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  }
+}
