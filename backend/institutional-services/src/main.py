@@ -1,44 +1,37 @@
 """
 TigerEx Institutional Services
-Comprehensive institutional trading platform with all features from major exchanges
-Prime brokerage, OTC trading, custody, portfolio management, and more
+Prime brokerage, OTC trading, custody services, and institutional-grade features
 """
 
-import asyncio
-import json
-import logging
 import os
-import uuid
+import asyncio
+import logging
 from datetime import datetime, timedelta
-from decimal import Decimal
-from typing import Dict, List, Optional, Any, Union
-from dataclasses import dataclass, asdict
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass
 from enum import Enum
+from decimal import Decimal
+import json
+import uuid
 import hashlib
 import hmac
-import base64
 import secrets
-from pathlib import Path
-
-import asyncpg
-import redis.asyncio as redis
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, validator, EmailStr
-import pandas as pd
-import numpy as np
-from kafka import KafkaProducer, KafkaConsumer
-import boto3
-from celery import Celery
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Text, DECIMAL, ForeignKey, JSON, Enum as SQLEnum
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session, relationship
+from sqlalchemy.sql import func
+import aioredis
+import asyncpg
+import aiohttp
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import requests
-import aiofiles
-import zipfile
-import io
+import boto3
+from botocore.exceptions import ClientError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,7 +40,7 @@ logger = logging.getLogger(__name__)
 # FastAPI app
 app = FastAPI(
     title="TigerEx Institutional Services",
-    description="Comprehensive institutional trading and custody platform",
+    description="Prime brokerage, OTC trading, and institutional-grade services",
     version="1.0.0"
 )
 
@@ -59,915 +52,1131 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Security
-security = HTTPBearer()
-
 # Configuration
 class Config:
-    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/tigerex")
+    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost/tigerex")
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-    KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9092").split(",")
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "institutional-secret-key")
     
-    # Institutional Security
-    INSTITUTIONAL_SECRET_KEY = os.getenv("INSTITUTIONAL_SECRET_KEY", secrets.token_urlsafe(32))
+    # Institutional limits
+    MIN_INSTITUTIONAL_VOLUME = Decimal("1000000")  # $1M minimum
+    OTC_MIN_ORDER_SIZE = Decimal("100000")  # $100K minimum for OTC
+    PRIME_BROKERAGE_MIN_AUM = Decimal("10000000")  # $10M minimum AUM
     
-    # External APIs
-    BLOOMBERG_API_KEY = os.getenv("BLOOMBERG_API_KEY")
-    REFINITIV_API_KEY = os.getenv("REFINITIV_API_KEY")
-    PRIME_BROKERAGE_API_KEY = os.getenv("PRIME_BROKERAGE_API_KEY")
+    # Custody settings
+    COLD_STORAGE_THRESHOLD = Decimal("1000000")  # Move to cold storage above $1M
+    MULTI_SIG_THRESHOLD = Decimal("500000")  # Require multi-sig above $500K
+    
+    # Compliance
+    LARGE_TRADE_THRESHOLD = Decimal("250000")  # Report trades above $250K
+    SUSPICIOUS_ACTIVITY_THRESHOLD = Decimal("1000000")  # Flag activity above $1M
 
 config = Config()
 
+# Database setup
+engine = create_engine(config.DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Security
+security = HTTPBearer()
+
 # Enums
 class InstitutionType(str, Enum):
-    HEDGE_FUND = "HEDGE_FUND"
-    ASSET_MANAGER = "ASSET_MANAGER"
-    FAMILY_OFFICE = "FAMILY_OFFICE"
-    PENSION_FUND = "PENSION_FUND"
-    INSURANCE_COMPANY = "INSURANCE_COMPANY"
-    BANK = "BANK"
-    BROKER_DEALER = "BROKER_DEALER"
-    MARKET_MAKER = "MARKET_MAKER"
-    PROPRIETARY_TRADING = "PROPRIETARY_TRADING"
-    CORPORATE_TREASURY = "CORPORATE_TREASURY"
+    HEDGE_FUND = "hedge_fund"
+    FAMILY_OFFICE = "family_office"
+    ASSET_MANAGER = "asset_manager"
+    PENSION_FUND = "pension_fund"
+    INSURANCE_COMPANY = "insurance_company"
+    BANK = "bank"
+    BROKER_DEALER = "broker_dealer"
+    PROPRIETARY_TRADING = "proprietary_trading"
+    MARKET_MAKER = "market_maker"
+    CORPORATE_TREASURY = "corporate_treasury"
 
 class ServiceTier(str, Enum):
-    BASIC = "BASIC"
-    PREMIUM = "PREMIUM"
-    ENTERPRISE = "ENTERPRISE"
-    WHITE_LABEL = "WHITE_LABEL"
+    BASIC = "basic"
+    PREMIUM = "premium"
+    ELITE = "elite"
+    WHITE_GLOVE = "white_glove"
 
-class OrderType(str, Enum):
-    MARKET = "MARKET"
-    LIMIT = "LIMIT"
-    STOP = "STOP"
-    STOP_LIMIT = "STOP_LIMIT"
-    ICEBERG = "ICEBERG"
-    TWAP = "TWAP"
-    VWAP = "VWAP"
-    IMPLEMENTATION_SHORTFALL = "IMPLEMENTATION_SHORTFALL"
-    ARRIVAL_PRICE = "ARRIVAL_PRICE"
-    PARTICIPATION_RATE = "PARTICIPATION_RATE"
-    BLOCK_TRADE = "BLOCK_TRADE"
-    CROSS_TRADE = "CROSS_TRADE"
+class OTCOrderStatus(str, Enum):
+    PENDING = "pending"
+    QUOTED = "quoted"
+    NEGOTIATING = "negotiating"
+    AGREED = "agreed"
+    SETTLING = "settling"
+    SETTLED = "settled"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
 
 class CustodyType(str, Enum):
-    HOT_WALLET = "HOT_WALLET"
-    COLD_STORAGE = "COLD_STORAGE"
-    MULTI_SIG = "MULTI_SIG"
-    HARDWARE_SECURITY_MODULE = "HARDWARE_SECURITY_MODULE"
-    INSTITUTIONAL_CUSTODY = "INSTITUTIONAL_CUSTODY"
-    SELF_CUSTODY = "SELF_CUSTODY"
+    HOT_WALLET = "hot_wallet"
+    WARM_WALLET = "warm_wallet"
+    COLD_STORAGE = "cold_storage"
+    MULTI_SIG = "multi_sig"
+    HARDWARE_SECURITY_MODULE = "hsm"
+    INSTITUTIONAL_CUSTODY = "institutional_custody"
 
 class ReportType(str, Enum):
-    DAILY_NAV = "DAILY_NAV"
-    PORTFOLIO_PERFORMANCE = "PORTFOLIO_PERFORMANCE"
-    RISK_METRICS = "RISK_METRICS"
-    COMPLIANCE_REPORT = "COMPLIANCE_REPORT"
-    TRADE_COST_ANALYSIS = "TRADE_COST_ANALYSIS"
-    ATTRIBUTION_ANALYSIS = "ATTRIBUTION_ANALYSIS"
-    REGULATORY_FILING = "REGULATORY_FILING"
+    DAILY_POSITIONS = "daily_positions"
+    TRADE_CONFIRMATION = "trade_confirmation"
+    MONTHLY_STATEMENT = "monthly_statement"
+    REGULATORY_FILING = "regulatory_filing"
+    RISK_REPORT = "risk_report"
+    COMPLIANCE_REPORT = "compliance_report"
+    TAX_REPORT = "tax_report"
 
-# Data Models
-@dataclass
-class InstitutionalClient:
-    client_id: str
-    institution_name: str
-    institution_type: InstitutionType
-    service_tier: ServiceTier
-    aum: Decimal  # Assets Under Management
-    contact_person: str
-    email: str
-    phone: str
-    address: Dict[str, str]
-    regulatory_licenses: List[str]
-    compliance_requirements: List[str]
-    risk_tolerance: str
-    investment_mandate: Dict[str, Any]
-    fee_structure: Dict[str, Decimal]
-    is_active: bool
-    onboarding_date: datetime
-    last_activity: Optional[datetime]
-    assigned_relationship_manager: str
-    credit_limit: Decimal
-    margin_requirements: Dict[str, Decimal]
+# Database Models
+class InstitutionalClient(Base):
+    __tablename__ = "institutional_clients"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    client_code = Column(String(20), unique=True, nullable=False, index=True)
+    legal_name = Column(String(255), nullable=False)
+    institution_type = Column(SQLEnum(InstitutionType), nullable=False)
+    service_tier = Column(SQLEnum(ServiceTier), default=ServiceTier.BASIC)
+    
+    # Contact Information
+    primary_contact_name = Column(String(255), nullable=False)
+    primary_contact_email = Column(String(255), nullable=False)
+    primary_contact_phone = Column(String(20))
+    
+    # Address
+    address_line1 = Column(String(255), nullable=False)
+    address_line2 = Column(String(255))
+    city = Column(String(100), nullable=False)
+    state_province = Column(String(100))
+    postal_code = Column(String(20))
+    country = Column(String(50), nullable=False)
+    
+    # Financial Information
+    aum = Column(DECIMAL(20, 2))  # Assets Under Management
+    annual_trading_volume = Column(DECIMAL(20, 2))
+    credit_limit = Column(DECIMAL(20, 2), default=0)
+    margin_limit = Column(DECIMAL(20, 2), default=0)
+    
+    # Service Configuration
+    services_enabled = Column(JSON)  # List of enabled services
+    trading_permissions = Column(JSON)  # Trading permissions
+    custody_preferences = Column(JSON)  # Custody preferences
+    reporting_preferences = Column(JSON)  # Reporting preferences
+    
+    # Compliance
+    kyc_status = Column(String(20), default='pending')
+    aml_status = Column(String(20), default='pending')
+    regulatory_status = Column(String(20), default='pending')
+    compliance_notes = Column(Text)
+    
+    # Account Management
+    account_manager_id = Column(Integer, ForeignKey("admin_users.id"))
+    relationship_manager_id = Column(Integer, ForeignKey("admin_users.id"))
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    onboarding_completed = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-@dataclass
-class PrimeBrokerageAccount:
-    account_id: str
-    client_id: str
-    account_type: str  # PRIME, EXECUTION_ONLY, CUSTODY_ONLY
-    base_currency: str
-    available_currencies: List[str]
-    credit_limit: Decimal
-    margin_requirement: Decimal
-    leverage_limit: Decimal
-    trading_permissions: List[str]
-    settlement_instructions: Dict[str, Any]
-    reporting_preferences: Dict[str, Any]
-    fee_schedule: Dict[str, Decimal]
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
+class OTCOrder(Base):
+    __tablename__ = "otc_orders"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(String(50), unique=True, nullable=False, index=True)
+    client_id = Column(Integer, ForeignKey("institutional_clients.id"), nullable=False)
+    
+    # Order Details
+    base_asset = Column(String(20), nullable=False)
+    quote_asset = Column(String(20), nullable=False)
+    side = Column(String(10), nullable=False)  # BUY or SELL
+    quantity = Column(DECIMAL(30, 8), nullable=False)
+    
+    # Pricing
+    requested_price = Column(DECIMAL(20, 8))
+    quoted_price = Column(DECIMAL(20, 8))
+    agreed_price = Column(DECIMAL(20, 8))
+    market_price_at_request = Column(DECIMAL(20, 8))
+    
+    # Status and Timing
+    status = Column(SQLEnum(OTCOrderStatus), default=OTCOrderStatus.PENDING)
+    quote_expires_at = Column(DateTime)
+    settlement_date = Column(DateTime)
+    
+    # Execution Details
+    executed_quantity = Column(DECIMAL(30, 8), default=0)
+    executed_price = Column(DECIMAL(20, 8))
+    execution_venue = Column(String(100))
+    
+    # Risk and Compliance
+    risk_score = Column(Integer, default=0)
+    compliance_checked = Column(Boolean, default=False)
+    requires_approval = Column(Boolean, default=False)
+    approved_by = Column(Integer, ForeignKey("admin_users.id"))
+    
+    # Metadata
+    notes = Column(Text)
+    external_order_id = Column(String(100))  # Client's order ID
+    
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-@dataclass
-class InstitutionalOrder:
-    order_id: str
-    client_id: str
-    account_id: str
-    symbol: str
-    side: str  # BUY, SELL
-    order_type: OrderType
-    quantity: Decimal
-    price: Optional[Decimal]
-    stop_price: Optional[Decimal]
-    time_in_force: str
-    execution_instructions: Dict[str, Any]
-    algo_parameters: Optional[Dict[str, Any]]
-    parent_order_id: Optional[str]
-    child_orders: List[str]
-    status: str
-    filled_quantity: Decimal
-    avg_fill_price: Decimal
-    commission: Decimal
-    slippage: Decimal
-    market_impact: Decimal
-    created_time: datetime
-    updated_time: datetime
-    trader_id: str
-    desk: str
-    strategy: str
-    compliance_checked: bool
-    risk_checked: bool
+class CustodyAccount(Base):
+    __tablename__ = "custody_accounts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(String(50), unique=True, nullable=False, index=True)
+    client_id = Column(Integer, ForeignKey("institutional_clients.id"), nullable=False)
+    
+    # Account Details
+    account_name = Column(String(255), nullable=False)
+    custody_type = Column(SQLEnum(CustodyType), nullable=False)
+    
+    # Security Configuration
+    multi_sig_required = Column(Boolean, default=False)
+    required_signatures = Column(Integer, default=1)
+    authorized_signers = Column(JSON)  # List of authorized signer IDs
+    
+    # Wallet Information
+    wallet_addresses = Column(JSON)  # Blockchain addresses
+    public_keys = Column(JSON)  # Public keys for verification
+    
+    # Insurance and Security
+    insurance_coverage = Column(DECIMAL(20, 2))
+    security_audit_date = Column(DateTime)
+    security_rating = Column(String(10))
+    
+    # Access Control
+    withdrawal_limits = Column(JSON)  # Daily/monthly limits per asset
+    ip_whitelist = Column(JSON)  # Allowed IP addresses
+    time_restrictions = Column(JSON)  # Time-based access restrictions
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-@dataclass
-class OTCTrade:
-    trade_id: str
-    client_id: str
-    counterparty_id: str
-    symbol: str
-    side: str
-    quantity: Decimal
-    price: Decimal
-    settlement_date: datetime
-    trade_type: str  # SPOT, FORWARD, SWAP
-    execution_venue: str  # OTC, DARK_POOL, CROSSING_NETWORK
-    commission: Decimal
-    spread: Decimal
-    timestamp: datetime
-    trader_id: str
-    is_block_trade: bool
-    minimum_quantity: Optional[Decimal]
-    all_or_none: bool
-    settlement_instructions: Dict[str, Any]
+class PrimeBrokerageAccount(Base):
+    __tablename__ = "prime_brokerage_accounts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(String(50), unique=True, nullable=False, index=True)
+    client_id = Column(Integer, ForeignKey("institutional_clients.id"), nullable=False)
+    
+    # Account Configuration
+    base_currency = Column(String(10), default='USD')
+    leverage_limit = Column(DECIMAL(10, 2), default=1.0)
+    margin_requirement = Column(DECIMAL(5, 4), default=0.1)  # 10% default
+    
+    # Balances
+    cash_balance = Column(DECIMAL(20, 2), default=0)
+    margin_balance = Column(DECIMAL(20, 2), default=0)
+    available_balance = Column(DECIMAL(20, 2), default=0)
+    
+    # Risk Management
+    var_limit = Column(DECIMAL(20, 2))  # Value at Risk limit
+    concentration_limits = Column(JSON)  # Per-asset concentration limits
+    sector_limits = Column(JSON)  # Per-sector limits
+    
+    # Fees and Pricing
+    commission_schedule = Column(JSON)  # Custom commission rates
+    financing_rates = Column(JSON)  # Margin financing rates
+    
+    # Services
+    securities_lending_enabled = Column(Boolean, default=False)
+    repo_services_enabled = Column(Boolean, default=False)
+    fx_services_enabled = Column(Boolean, default=False)
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-@dataclass
-class CustodyHolding:
-    holding_id: str
-    client_id: str
-    account_id: str
-    asset: str
-    quantity: Decimal
-    custody_type: CustodyType
-    storage_location: str
-    insurance_coverage: Decimal
-    last_audit_date: datetime
-    next_audit_date: datetime
-    segregation_type: str  # SEGREGATED, OMNIBUS
-    encumbrance_status: str  # FREE, PLEDGED, RESTRICTED
-    valuation_method: str
-    market_value: Decimal
-    cost_basis: Decimal
-    unrealized_pnl: Decimal
-    created_at: datetime
-    updated_at: datetime
-
-@dataclass
-class PortfolioAllocation:
-    allocation_id: str
-    client_id: str
-    portfolio_id: str
-    asset_class: str
-    target_allocation: Decimal
-    current_allocation: Decimal
-    deviation: Decimal
-    rebalance_threshold: Decimal
-    last_rebalance: datetime
-    next_rebalance: datetime
-    constraints: Dict[str, Any]
-    benchmark: str
-    performance_attribution: Dict[str, Decimal]
-
-@dataclass
-class RiskMetrics:
-    client_id: str
-    portfolio_id: str
-    var_1d: Decimal  # 1-day Value at Risk
-    var_10d: Decimal  # 10-day Value at Risk
-    expected_shortfall: Decimal
-    maximum_drawdown: Decimal
-    sharpe_ratio: Decimal
-    sortino_ratio: Decimal
-    beta: Decimal
-    alpha: Decimal
-    tracking_error: Decimal
-    information_ratio: Decimal
-    volatility: Decimal
-    correlation_matrix: Dict[str, Dict[str, Decimal]]
-    sector_exposure: Dict[str, Decimal]
-    geographic_exposure: Dict[str, Decimal]
-    currency_exposure: Dict[str, Decimal]
-    leverage: Decimal
-    concentration_risk: Decimal
-    liquidity_risk: Decimal
-    calculated_at: datetime
+class InstitutionalReport(Base):
+    __tablename__ = "institutional_reports"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    report_id = Column(String(50), unique=True, nullable=False, index=True)
+    client_id = Column(Integer, ForeignKey("institutional_clients.id"), nullable=False)
+    
+    # Report Details
+    report_type = Column(SQLEnum(ReportType), nullable=False)
+    report_period_start = Column(DateTime, nullable=False)
+    report_period_end = Column(DateTime, nullable=False)
+    
+    # Content
+    report_data = Column(JSON)  # Report content
+    file_url = Column(String(500))  # URL to generated file
+    file_format = Column(String(10))  # PDF, CSV, XLSX, etc.
+    
+    # Generation
+    generated_at = Column(DateTime)
+    generated_by = Column(Integer, ForeignKey("admin_users.id"))
+    
+    # Delivery
+    delivery_method = Column(String(20))  # email, sftp, api, portal
+    delivered_at = Column(DateTime)
+    delivery_status = Column(String(20), default='pending')
+    
+    created_at = Column(DateTime, default=func.now())
 
 # Pydantic Models
-class CreateInstitutionalClientRequest(BaseModel):
-    institution_name: str
+class InstitutionalClientCreate(BaseModel):
+    legal_name: str
     institution_type: InstitutionType
-    service_tier: ServiceTier
-    aum: Decimal
-    contact_person: str
-    email: EmailStr
-    phone: str
-    address: Dict[str, str]
-    regulatory_licenses: List[str]
-    compliance_requirements: List[str]
-    risk_tolerance: str
-    investment_mandate: Dict[str, Any]
+    primary_contact_name: str
+    primary_contact_email: EmailStr
+    primary_contact_phone: Optional[str] = None
+    address_line1: str
+    address_line2: Optional[str] = None
+    city: str
+    state_province: Optional[str] = None
+    postal_code: str
+    country: str
+    aum: Optional[Decimal] = None
+    annual_trading_volume: Optional[Decimal] = None
+    services_enabled: List[str] = []
 
-class PlaceInstitutionalOrderRequest(BaseModel):
-    client_id: str
-    account_id: str
-    symbol: str
-    side: str
-    order_type: OrderType
+class OTCOrderRequest(BaseModel):
+    base_asset: str
+    quote_asset: str
+    side: str  # BUY or SELL
     quantity: Decimal
-    price: Optional[Decimal] = None
-    stop_price: Optional[Decimal] = None
-    time_in_force: str = "GTC"
-    execution_instructions: Optional[Dict[str, Any]] = None
-    algo_parameters: Optional[Dict[str, Any]] = None
-    trader_id: str
-    desk: str
-    strategy: str
+    requested_price: Optional[Decimal] = None
+    external_order_id: Optional[str] = None
+    notes: Optional[str] = None
+    
+    @validator('side')
+    def validate_side(cls, v):
+        if v not in ['BUY', 'SELL']:
+            raise ValueError('Side must be BUY or SELL')
+        return v
+    
+    @validator('quantity')
+    def validate_quantity(cls, v):
+        if v <= 0:
+            raise ValueError('Quantity must be positive')
+        if v < config.OTC_MIN_ORDER_SIZE:
+            raise ValueError(f'Minimum OTC order size is {config.OTC_MIN_ORDER_SIZE}')
+        return v
 
-class OTCTradeRequest(BaseModel):
-    client_id: str
-    counterparty_id: str
-    symbol: str
-    side: str
+class OTCQuoteResponse(BaseModel):
+    order_id: str
+    quoted_price: Decimal
     quantity: Decimal
-    price: Decimal
-    settlement_date: datetime
-    trade_type: str = "SPOT"
-    execution_venue: str = "OTC"
-    trader_id: str
-    is_block_trade: bool = False
-    minimum_quantity: Optional[Decimal] = None
-    all_or_none: bool = False
+    total_value: Decimal
+    quote_expires_at: datetime
+    spread: Decimal
+    market_impact: Decimal
 
-class CustodyRequest(BaseModel):
-    client_id: str
-    account_id: str
-    asset: str
-    quantity: Decimal
+class CustodyAccountCreate(BaseModel):
+    account_name: str
     custody_type: CustodyType
-    storage_location: str
-    insurance_coverage: Decimal
-    segregation_type: str = "SEGREGATED"
+    multi_sig_required: bool = False
+    required_signatures: int = 1
+    authorized_signers: List[str] = []
+    insurance_coverage: Optional[Decimal] = None
+    withdrawal_limits: Dict[str, Decimal] = {}
 
-class RebalanceRequest(BaseModel):
-    client_id: str
-    portfolio_id: str
-    target_allocations: Dict[str, Decimal]
-    rebalance_method: str = "THRESHOLD"
-    constraints: Optional[Dict[str, Any]] = None
+class PrimeBrokerageAccountCreate(BaseModel):
+    base_currency: str = 'USD'
+    leverage_limit: Decimal = Decimal('1.0')
+    margin_requirement: Decimal = Decimal('0.1')
+    var_limit: Optional[Decimal] = None
+    services_enabled: List[str] = []
 
-# Database connection
-async def get_db_connection():
-    return await asyncpg.connect(config.DATABASE_URL)
+class ReportRequest(BaseModel):
+    report_type: ReportType
+    period_start: datetime
+    period_end: datetime
+    file_format: str = 'PDF'
+    delivery_method: str = 'email'
 
-# Redis connection
-async def get_redis_connection():
-    return await redis.from_url(config.REDIS_URL)
+# Dependency functions
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+async def get_current_institutional_client(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    # Validate institutional client token
+    # This is a simplified implementation
+    client = db.query(InstitutionalClient).filter(
+        InstitutionalClient.client_code == "INST001"
+    ).first()
+    
+    if not client:
+        raise HTTPException(status_code=401, detail="Invalid institutional client")
+    
+    return client
 
 # Institutional Services Manager
 class InstitutionalServicesManager:
     def __init__(self):
-        self.kafka_producer = self.initialize_kafka_producer()
-        self.s3_client = self.initialize_s3_client()
+        self.redis_client = None
+        self.market_data_cache = {}
+        self.risk_engine = RiskEngine()
+        self.compliance_engine = ComplianceEngine()
+        self.pricing_engine = PricingEngine()
+        
+    async def initialize(self):
+        """Initialize async components"""
+        self.redis_client = await aioredis.from_url(config.REDIS_URL)
     
-    def initialize_kafka_producer(self):
-        try:
-            return KafkaProducer(
-                bootstrap_servers=config.KAFKA_BROKERS,
-                value_serializer=lambda v: json.dumps(v).encode('utf-8')
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize Kafka producer: {e}")
-            return None
-    
-    def initialize_s3_client(self):
-        try:
-            return boto3.client('s3')
-        except Exception as e:
-            logger.error(f"Failed to initialize S3 client: {e}")
-            return None
-    
-    async def create_institutional_client(self, request: CreateInstitutionalClientRequest) -> str:
+    async def create_institutional_client(
+        self, 
+        client_data: InstitutionalClientCreate,
+        db: Session
+    ) -> InstitutionalClient:
         """Create new institutional client"""
-        db = await get_db_connection()
-        try:
-            client_id = str(uuid.uuid4())
-            
-            await db.execute("""
-                INSERT INTO institutional_clients 
-                (client_id, institution_name, institution_type, service_tier, aum,
-                 contact_person, email, phone, address, regulatory_licenses,
-                 compliance_requirements, risk_tolerance, investment_mandate,
-                 is_active, onboarding_date, assigned_relationship_manager,
-                 credit_limit, margin_requirements)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-            """, 
-                client_id, request.institution_name, request.institution_type.value,
-                request.service_tier.value, request.aum, request.contact_person,
-                request.email, request.phone, json.dumps(request.address),
-                json.dumps(request.regulatory_licenses), 
-                json.dumps(request.compliance_requirements),
-                request.risk_tolerance, json.dumps(request.investment_mandate),
-                True, datetime.utcnow(), "default_rm", Decimal('1000000'),
-                json.dumps({"initial_margin": "0.1", "maintenance_margin": "0.05"})
-            )
-            
-            # Create default prime brokerage account
-            await self.create_prime_brokerage_account(client_id, "USD")
-            
-            # Initialize portfolio and risk metrics
-            await self.initialize_client_portfolio(client_id)
-            
-            return client_id
-            
-        finally:
-            await db.close()
-    
-    async def create_prime_brokerage_account(self, client_id: str, base_currency: str) -> str:
-        """Create prime brokerage account for client"""
-        db = await get_db_connection()
-        try:
-            account_id = str(uuid.uuid4())
-            
-            await db.execute("""
-                INSERT INTO prime_brokerage_accounts
-                (account_id, client_id, account_type, base_currency, available_currencies,
-                 credit_limit, margin_requirement, leverage_limit, trading_permissions,
-                 settlement_instructions, reporting_preferences, fee_schedule,
-                 is_active, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-            """,
-                account_id, client_id, "PRIME", base_currency,
-                json.dumps(["USD", "EUR", "GBP", "JPY", "BTC", "ETH"]),
-                Decimal('10000000'), Decimal('0.1'), 10,
-                json.dumps(["SPOT", "MARGIN", "FUTURES", "OPTIONS"]),
-                json.dumps({"settlement_cycle": "T+2", "preferred_custodian": "TigerEx"}),
-                json.dumps({"frequency": "DAILY", "format": "PDF", "delivery": "EMAIL"}),
-                json.dumps({"commission": "0.001", "financing": "0.05", "custody": "0.0001"}),
-                True, datetime.utcnow(), datetime.utcnow()
-            )
-            
-            return account_id
-            
-        finally:
-            await db.close()
-    
-    async def initialize_client_portfolio(self, client_id: str):
-        """Initialize portfolio and risk tracking for client"""
-        db = await get_db_connection()
-        try:
-            portfolio_id = str(uuid.uuid4())
-            
-            # Create portfolio record
-            await db.execute("""
-                INSERT INTO institutional_portfolios
-                (portfolio_id, client_id, portfolio_name, base_currency, inception_date,
-                 benchmark, investment_objective, risk_profile, is_active)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            """,
-                portfolio_id, client_id, "Main Portfolio", "USD", datetime.utcnow(),
-                "BTC", "Capital Appreciation", "MODERATE", True
-            )
-            
-            # Initialize default allocations
-            default_allocations = [
-                {"asset_class": "BTC", "target_allocation": Decimal('0.4')},
-                {"asset_class": "ETH", "target_allocation": Decimal('0.3')},
-                {"asset_class": "ALTCOINS", "target_allocation": Decimal('0.2')},
-                {"asset_class": "STABLECOINS", "target_allocation": Decimal('0.1')},
-            ]
-            
-            for allocation in default_allocations:
-                await db.execute("""
-                    INSERT INTO portfolio_allocations
-                    (allocation_id, client_id, portfolio_id, asset_class, target_allocation,
-                     current_allocation, deviation, rebalance_threshold, last_rebalance,
-                     next_rebalance, constraints, benchmark)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                """,
-                    str(uuid.uuid4()), client_id, portfolio_id, allocation["asset_class"],
-                    allocation["target_allocation"], Decimal('0'), Decimal('0'),
-                    Decimal('0.05'), datetime.utcnow(), datetime.utcnow() + timedelta(days=30),
-                    json.dumps({}), "CRYPTO_INDEX"
-                )
-            
-        finally:
-            await db.close()
-    
-    async def place_institutional_order(self, request: PlaceInstitutionalOrderRequest) -> str:
-        """Place institutional order with advanced execution algorithms"""
-        db = await get_db_connection()
-        try:
-            order_id = str(uuid.uuid4())
-            
-            # Validate client and account
-            client_exists = await db.fetchval("""
-                SELECT EXISTS(SELECT 1 FROM institutional_clients WHERE client_id = $1 AND is_active = true)
-            """, request.client_id)
-            
-            if not client_exists:
-                raise HTTPException(status_code=404, detail="Client not found")
-            
-            # Check compliance and risk
-            compliance_check = await self.check_compliance(request)
-            risk_check = await self.check_risk_limits(request)
-            
-            if not compliance_check or not risk_check:
-                raise HTTPException(status_code=400, detail="Order failed compliance or risk checks")
-            
-            # Store order
-            await db.execute("""
-                INSERT INTO institutional_orders
-                (order_id, client_id, account_id, symbol, side, order_type, quantity,
-                 price, stop_price, time_in_force, execution_instructions, algo_parameters,
-                 status, filled_quantity, avg_fill_price, commission, slippage,
-                 market_impact, created_time, updated_time, trader_id, desk, strategy,
-                 compliance_checked, risk_checked)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
-            """,
-                order_id, request.client_id, request.account_id, request.symbol,
-                request.side, request.order_type.value, request.quantity,
-                request.price, request.stop_price, request.time_in_force,
-                json.dumps(request.execution_instructions or {}),
-                json.dumps(request.algo_parameters or {}),
-                "NEW", Decimal('0'), Decimal('0'), Decimal('0'), Decimal('0'),
-                Decimal('0'), datetime.utcnow(), datetime.utcnow(),
-                request.trader_id, request.desk, request.strategy, True, True
-            )
-            
-            # Execute order based on type
-            if request.order_type in [OrderType.TWAP, OrderType.VWAP, OrderType.IMPLEMENTATION_SHORTFALL]:
-                await self.execute_algorithmic_order(order_id, request)
-            else:
-                await self.execute_standard_order(order_id, request)
-            
-            # Publish order event
-            if self.kafka_producer:
-                self.kafka_producer.send('institutional-orders', {
-                    "order_id": order_id,
-                    "client_id": request.client_id,
-                    "symbol": request.symbol,
-                    "side": request.side,
-                    "quantity": str(request.quantity),
-                    "order_type": request.order_type.value,
-                    "timestamp": datetime.utcnow().isoformat()
-                })
-            
-            return order_id
-            
-        finally:
-            await db.close()
-    
-    async def check_compliance(self, request: PlaceInstitutionalOrderRequest) -> bool:
-        """Check order against compliance rules"""
-        # Implement compliance checks
-        # - Position limits
-        # - Concentration limits
-        # - Restricted securities
-        # - Regulatory requirements
-        return True
-    
-    async def check_risk_limits(self, request: PlaceInstitutionalOrderRequest) -> bool:
-        """Check order against risk limits"""
-        # Implement risk checks
-        # - Credit limits
-        # - Leverage limits
-        # - VaR limits
-        # - Stress test scenarios
-        return True
-    
-    async def execute_algorithmic_order(self, order_id: str, request: PlaceInstitutionalOrderRequest):
-        """Execute algorithmic order using advanced strategies"""
-        if request.order_type == OrderType.TWAP:
-            await self.execute_twap_order(order_id, request)
-        elif request.order_type == OrderType.VWAP:
-            await self.execute_vwap_order(order_id, request)
-        elif request.order_type == OrderType.IMPLEMENTATION_SHORTFALL:
-            await self.execute_is_order(order_id, request)
-    
-    async def execute_twap_order(self, order_id: str, request: PlaceInstitutionalOrderRequest):
-        """Execute Time-Weighted Average Price order"""
-        # Split order into time-based slices
-        algo_params = request.algo_parameters or {}
-        duration_minutes = algo_params.get("duration_minutes", 60)
-        slice_count = algo_params.get("slice_count", 10)
         
-        slice_size = request.quantity / slice_count
-        slice_interval = duration_minutes / slice_count
+        # Generate unique client code
+        client_code = self.generate_client_code(client_data.institution_type)
         
-        # Schedule child orders
-        for i in range(slice_count):
-            child_order_id = str(uuid.uuid4())
-            execution_time = datetime.utcnow() + timedelta(minutes=i * slice_interval)
-            
-            # Store child order for later execution
-            await self.schedule_child_order(child_order_id, order_id, slice_size, execution_time)
+        # Determine service tier based on AUM
+        service_tier = self.determine_service_tier(client_data.aum or Decimal('0'))
+        
+        client = InstitutionalClient(
+            client_code=client_code,
+            legal_name=client_data.legal_name,
+            institution_type=client_data.institution_type,
+            service_tier=service_tier,
+            primary_contact_name=client_data.primary_contact_name,
+            primary_contact_email=client_data.primary_contact_email,
+            primary_contact_phone=client_data.primary_contact_phone,
+            address_line1=client_data.address_line1,
+            address_line2=client_data.address_line2,
+            city=client_data.city,
+            state_province=client_data.state_province,
+            postal_code=client_data.postal_code,
+            country=client_data.country,
+            aum=client_data.aum,
+            annual_trading_volume=client_data.annual_trading_volume,
+            services_enabled=client_data.services_enabled
+        )
+        
+        db.add(client)
+        db.commit()
+        db.refresh(client)
+        
+        # Initialize default accounts
+        await self.setup_default_accounts(client, db)
+        
+        # Send welcome email
+        await self.send_welcome_email(client)
+        
+        return client
     
-    async def execute_vwap_order(self, order_id: str, request: PlaceInstitutionalOrderRequest):
-        """Execute Volume-Weighted Average Price order"""
-        # Analyze historical volume patterns
-        # Split order based on expected volume distribution
-        pass
+    def generate_client_code(self, institution_type: InstitutionType) -> str:
+        """Generate unique client code"""
+        prefix_map = {
+            InstitutionType.HEDGE_FUND: "HF",
+            InstitutionType.FAMILY_OFFICE: "FO",
+            InstitutionType.ASSET_MANAGER: "AM",
+            InstitutionType.PENSION_FUND: "PF",
+            InstitutionType.INSURANCE_COMPANY: "IC",
+            InstitutionType.BANK: "BK",
+            InstitutionType.BROKER_DEALER: "BD",
+            InstitutionType.PROPRIETARY_TRADING: "PT",
+            InstitutionType.MARKET_MAKER: "MM",
+            InstitutionType.CORPORATE_TREASURY: "CT"
+        }
+        
+        prefix = prefix_map.get(institution_type, "IN")
+        timestamp = int(datetime.now().timestamp())
+        random_suffix = secrets.token_hex(2).upper()
+        
+        return f"{prefix}{timestamp % 10000:04d}{random_suffix}"
     
-    async def execute_is_order(self, order_id: str, request: PlaceInstitutionalOrderRequest):
-        """Execute Implementation Shortfall order"""
-        # Optimize trade-off between market impact and timing risk
-        pass
+    def determine_service_tier(self, aum: Decimal) -> ServiceTier:
+        """Determine service tier based on AUM"""
+        if aum >= Decimal('1000000000'):  # $1B+
+            return ServiceTier.WHITE_GLOVE
+        elif aum >= Decimal('100000000'):  # $100M+
+            return ServiceTier.ELITE
+        elif aum >= Decimal('10000000'):   # $10M+
+            return ServiceTier.PREMIUM
+        else:
+            return ServiceTier.BASIC
     
-    async def execute_standard_order(self, order_id: str, request: PlaceInstitutionalOrderRequest):
-        """Execute standard order types"""
-        # Route to appropriate execution venue
-        # Handle market/limit orders
-        pass
-    
-    async def schedule_child_order(self, child_order_id: str, parent_order_id: str, 
-                                 quantity: Decimal, execution_time: datetime):
-        """Schedule child order for later execution"""
-        # Implementation for scheduling child orders
-        pass
-    
-    async def execute_otc_trade(self, request: OTCTradeRequest) -> str:
-        """Execute OTC trade"""
-        db = await get_db_connection()
-        try:
-            trade_id = str(uuid.uuid4())
-            
-            await db.execute("""
-                INSERT INTO otc_trades
-                (trade_id, client_id, counterparty_id, symbol, side, quantity, price,
-                 settlement_date, trade_type, execution_venue, commission, spread,
-                 timestamp, trader_id, is_block_trade, minimum_quantity, all_or_none,
-                 settlement_instructions)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-            """,
-                trade_id, request.client_id, request.counterparty_id, request.symbol,
-                request.side, request.quantity, request.price, request.settlement_date,
-                request.trade_type, request.execution_venue, Decimal('0'), Decimal('0'),
-                datetime.utcnow(), request.trader_id, request.is_block_trade,
-                request.minimum_quantity, request.all_or_none, json.dumps({})
+    async def setup_default_accounts(self, client: InstitutionalClient, db: Session):
+        """Setup default accounts for new institutional client"""
+        
+        # Create custody account
+        custody_account = CustodyAccount(
+            account_id=f"{client.client_code}_CUSTODY",
+            client_id=client.id,
+            account_name=f"{client.legal_name} - Custody Account",
+            custody_type=CustodyType.MULTI_SIG,
+            multi_sig_required=True,
+            required_signatures=2,
+            insurance_coverage=Decimal('10000000')  # $10M default coverage
+        )
+        
+        db.add(custody_account)
+        
+        # Create prime brokerage account if eligible
+        if client.aum and client.aum >= config.PRIME_BROKERAGE_MIN_AUM:
+            pb_account = PrimeBrokerageAccount(
+                account_id=f"{client.client_code}_PB",
+                client_id=client.id,
+                base_currency='USD',
+                leverage_limit=Decimal('5.0'),  # 5x leverage for institutions
+                margin_requirement=Decimal('0.2'),  # 20% margin requirement
+                var_limit=client.aum * Decimal('0.05')  # 5% of AUM as VaR limit
             )
             
-            # Update positions and settlements
-            await self.update_otc_positions(trade_id, request)
-            
-            return trade_id
-            
-        finally:
-            await db.close()
+            db.add(pb_account)
+        
+        db.commit()
     
-    async def update_otc_positions(self, trade_id: str, request: OTCTradeRequest):
-        """Update positions after OTC trade"""
-        # Implementation for position updates
-        pass
-    
-    async def setup_custody_service(self, request: CustodyRequest) -> str:
-        """Setup custody service for client assets"""
-        db = await get_db_connection()
-        try:
-            holding_id = str(uuid.uuid4())
-            
-            await db.execute("""
-                INSERT INTO custody_holdings
-                (holding_id, client_id, account_id, asset, quantity, custody_type,
-                 storage_location, insurance_coverage, last_audit_date, next_audit_date,
-                 segregation_type, encumbrance_status, valuation_method, market_value,
-                 cost_basis, unrealized_pnl, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-            """,
-                holding_id, request.client_id, request.account_id, request.asset,
-                request.quantity, request.custody_type.value, request.storage_location,
-                request.insurance_coverage, datetime.utcnow(), 
-                datetime.utcnow() + timedelta(days=90), request.segregation_type,
-                "FREE", "MARK_TO_MARKET", Decimal('0'), Decimal('0'), Decimal('0'),
-                datetime.utcnow(), datetime.utcnow()
+    async def request_otc_quote(
+        self,
+        client: InstitutionalClient,
+        order_request: OTCOrderRequest,
+        db: Session
+    ) -> OTCQuoteResponse:
+        """Request OTC quote for large order"""
+        
+        # Validate order size
+        if order_request.quantity * (order_request.requested_price or Decimal('1')) < config.OTC_MIN_ORDER_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Minimum OTC order size is ${config.OTC_MIN_ORDER_SIZE}"
             )
-            
-            # Setup custody infrastructure
-            await self.setup_custody_infrastructure(holding_id, request)
-            
-            return holding_id
-            
-        finally:
-            await db.close()
+        
+        # Get current market price
+        market_price = await self.get_market_price(
+            f"{order_request.base_asset}{order_request.quote_asset}"
+        )
+        
+        # Calculate quote using pricing engine
+        quote_price, spread, market_impact = await self.pricing_engine.calculate_otc_quote(
+            base_asset=order_request.base_asset,
+            quote_asset=order_request.quote_asset,
+            side=order_request.side,
+            quantity=order_request.quantity,
+            market_price=market_price,
+            client_tier=client.service_tier
+        )
+        
+        # Create OTC order record
+        order_id = f"OTC_{client.client_code}_{int(datetime.now().timestamp())}"
+        
+        otc_order = OTCOrder(
+            order_id=order_id,
+            client_id=client.id,
+            base_asset=order_request.base_asset,
+            quote_asset=order_request.quote_asset,
+            side=order_request.side,
+            quantity=order_request.quantity,
+            requested_price=order_request.requested_price,
+            quoted_price=quote_price,
+            market_price_at_request=market_price,
+            status=OTCOrderStatus.QUOTED,
+            quote_expires_at=datetime.now() + timedelta(minutes=15),  # 15-minute quote validity
+            external_order_id=order_request.external_order_id,
+            notes=order_request.notes
+        )
+        
+        db.add(otc_order)
+        db.commit()
+        db.refresh(otc_order)
+        
+        # Cache quote for quick access
+        await self.redis_client.setex(
+            f"otc_quote:{order_id}",
+            900,  # 15 minutes
+            json.dumps({
+                "order_id": order_id,
+                "quoted_price": str(quote_price),
+                "expires_at": otc_order.quote_expires_at.isoformat()
+            })
+        )
+        
+        return OTCQuoteResponse(
+            order_id=order_id,
+            quoted_price=quote_price,
+            quantity=order_request.quantity,
+            total_value=quote_price * order_request.quantity,
+            quote_expires_at=otc_order.quote_expires_at,
+            spread=spread,
+            market_impact=market_impact
+        )
     
-    async def setup_custody_infrastructure(self, holding_id: str, request: CustodyRequest):
-        """Setup custody infrastructure based on custody type"""
-        if request.custody_type == CustodyType.COLD_STORAGE:
-            await self.setup_cold_storage(holding_id, request)
-        elif request.custody_type == CustodyType.MULTI_SIG:
-            await self.setup_multisig_wallet(holding_id, request)
-        elif request.custody_type == CustodyType.HARDWARE_SECURITY_MODULE:
-            await self.setup_hsm_custody(holding_id, request)
-    
-    async def setup_cold_storage(self, holding_id: str, request: CustodyRequest):
-        """Setup cold storage custody"""
-        # Implementation for cold storage setup
-        pass
-    
-    async def setup_multisig_wallet(self, holding_id: str, request: CustodyRequest):
-        """Setup multi-signature wallet"""
-        # Implementation for multisig wallet setup
-        pass
-    
-    async def setup_hsm_custody(self, holding_id: str, request: CustodyRequest):
-        """Setup Hardware Security Module custody"""
-        # Implementation for HSM custody setup
-        pass
-    
-    async def calculate_portfolio_risk_metrics(self, client_id: str, portfolio_id: str) -> RiskMetrics:
-        """Calculate comprehensive risk metrics for portfolio"""
-        db = await get_db_connection()
-        try:
-            # Get portfolio positions
-            positions = await db.fetch("""
-                SELECT asset, quantity, market_value, cost_basis
-                FROM custody_holdings
-                WHERE client_id = $1
-            """, client_id)
+    async def accept_otc_quote(
+        self,
+        client: InstitutionalClient,
+        order_id: str,
+        db: Session
+    ) -> Dict[str, Any]:
+        """Accept OTC quote and execute trade"""
+        
+        # Get OTC order
+        otc_order = db.query(OTCOrder).filter(
+            OTCOrder.order_id == order_id,
+            OTCOrder.client_id == client.id,
+            OTCOrder.status == OTCOrderStatus.QUOTED
+        ).first()
+        
+        if not otc_order:
+            raise HTTPException(status_code=404, detail="OTC order not found or not quotable")
+        
+        # Check if quote is still valid
+        if datetime.now() > otc_order.quote_expires_at:
+            otc_order.status = OTCOrderStatus.EXPIRED
+            db.commit()
+            raise HTTPException(status_code=400, detail="Quote has expired")
+        
+        # Risk and compliance checks
+        risk_check = await self.risk_engine.check_otc_order(otc_order, client)
+        compliance_check = await self.compliance_engine.check_otc_order(otc_order, client)
+        
+        if not risk_check.approved:
+            raise HTTPException(status_code=400, detail=f"Risk check failed: {risk_check.reason}")
+        
+        if not compliance_check.approved:
+            otc_order.requires_approval = True
+            otc_order.status = OTCOrderStatus.PENDING
+            db.commit()
             
-            # Calculate risk metrics
-            # This is a simplified implementation
-            risk_metrics = RiskMetrics(
-                client_id=client_id,
-                portfolio_id=portfolio_id,
-                var_1d=Decimal('100000'),  # $100k 1-day VaR
-                var_10d=Decimal('316227'),  # $316k 10-day VaR (sqrt(10) scaling)
-                expected_shortfall=Decimal('150000'),
-                maximum_drawdown=Decimal('0.15'),  # 15%
-                sharpe_ratio=Decimal('1.2'),
-                sortino_ratio=Decimal('1.5'),
-                beta=Decimal('1.1'),
-                alpha=Decimal('0.05'),  # 5% alpha
-                tracking_error=Decimal('0.08'),  # 8% tracking error
-                information_ratio=Decimal('0.625'),
-                volatility=Decimal('0.25'),  # 25% volatility
-                correlation_matrix={},
-                sector_exposure={},
-                geographic_exposure={},
-                currency_exposure={},
-                leverage=Decimal('1.5'),
-                concentration_risk=Decimal('0.3'),  # 30% in largest position
-                liquidity_risk=Decimal('0.1'),  # 10% in illiquid assets
-                calculated_at=datetime.utcnow()
-            )
-            
-            # Store risk metrics
-            await self.store_risk_metrics(risk_metrics)
-            
-            return risk_metrics
-            
-        finally:
-            await db.close()
-    
-    async def store_risk_metrics(self, risk_metrics: RiskMetrics):
-        """Store risk metrics in database"""
-        db = await get_db_connection()
-        try:
-            await db.execute("""
-                INSERT INTO portfolio_risk_metrics
-                (client_id, portfolio_id, var_1d, var_10d, expected_shortfall,
-                 maximum_drawdown, sharpe_ratio, sortino_ratio, beta, alpha,
-                 tracking_error, information_ratio, volatility, correlation_matrix,
-                 sector_exposure, geographic_exposure, currency_exposure, leverage,
-                 concentration_risk, liquidity_risk, calculated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
-            """,
-                risk_metrics.client_id, risk_metrics.portfolio_id, risk_metrics.var_1d,
-                risk_metrics.var_10d, risk_metrics.expected_shortfall,
-                risk_metrics.maximum_drawdown, risk_metrics.sharpe_ratio,
-                risk_metrics.sortino_ratio, risk_metrics.beta, risk_metrics.alpha,
-                risk_metrics.tracking_error, risk_metrics.information_ratio,
-                risk_metrics.volatility, json.dumps(risk_metrics.correlation_matrix),
-                json.dumps(risk_metrics.sector_exposure),
-                json.dumps(risk_metrics.geographic_exposure),
-                json.dumps(risk_metrics.currency_exposure), risk_metrics.leverage,
-                risk_metrics.concentration_risk, risk_metrics.liquidity_risk,
-                risk_metrics.calculated_at
-            )
-        finally:
-            await db.close()
-    
-    async def rebalance_portfolio(self, request: RebalanceRequest) -> Dict[str, Any]:
-        """Rebalance portfolio to target allocations"""
-        db = await get_db_connection()
-        try:
-            # Get current allocations
-            current_allocations = await db.fetch("""
-                SELECT asset_class, current_allocation, target_allocation
-                FROM portfolio_allocations
-                WHERE client_id = $1 AND portfolio_id = $2
-            """, request.client_id, request.portfolio_id)
-            
-            rebalance_trades = []
-            
-            for allocation in current_allocations:
-                asset_class = allocation['asset_class']
-                current = Decimal(str(allocation['current_allocation']))
-                target = Decimal(str(allocation['target_allocation']))
-                
-                if asset_class in request.target_allocations:
-                    new_target = request.target_allocations[asset_class]
-                    
-                    if abs(current - new_target) > Decimal('0.01'):  # 1% threshold
-                        trade_amount = new_target - current
-                        
-                        rebalance_trades.append({
-                            "asset_class": asset_class,
-                            "current_allocation": current,
-                            "target_allocation": new_target,
-                            "trade_amount": trade_amount,
-                            "trade_side": "BUY" if trade_amount > 0 else "SELL"
-                        })
-            
-            # Execute rebalance trades
-            for trade in rebalance_trades:
-                await self.execute_rebalance_trade(request.client_id, trade)
+            # Notify compliance team
+            await self.notify_compliance_team(otc_order, compliance_check.reason)
             
             return {
-                "rebalance_id": str(uuid.uuid4()),
-                "client_id": request.client_id,
-                "portfolio_id": request.portfolio_id,
-                "trades": rebalance_trades,
-                "execution_time": datetime.utcnow().isoformat()
+                "status": "pending_approval",
+                "message": "Order requires compliance approval",
+                "order_id": order_id
+            }
+        
+        # Execute the trade
+        execution_result = await self.execute_otc_trade(otc_order, db)
+        
+        return execution_result
+    
+    async def execute_otc_trade(self, otc_order: OTCOrder, db: Session) -> Dict[str, Any]:
+        """Execute OTC trade"""
+        
+        try:
+            # Update order status
+            otc_order.status = OTCOrderStatus.SETTLING
+            otc_order.agreed_price = otc_order.quoted_price
+            otc_order.settlement_date = datetime.now() + timedelta(days=1)  # T+1 settlement
+            
+            # Execute trade through liquidity providers
+            execution_venues = await self.find_liquidity_sources(otc_order)
+            
+            total_executed = Decimal('0')
+            weighted_avg_price = Decimal('0')
+            
+            for venue in execution_venues:
+                if total_executed >= otc_order.quantity:
+                    break
+                
+                remaining_qty = otc_order.quantity - total_executed
+                venue_qty = min(venue['available_quantity'], remaining_qty)
+                
+                # Execute portion at this venue
+                venue_execution = await self.execute_at_venue(
+                    venue=venue,
+                    quantity=venue_qty,
+                    order=otc_order
+                )
+                
+                if venue_execution['success']:
+                    executed_qty = venue_execution['executed_quantity']
+                    executed_price = venue_execution['executed_price']
+                    
+                    # Update weighted average price
+                    weighted_avg_price = (
+                        (weighted_avg_price * total_executed + executed_price * executed_qty) /
+                        (total_executed + executed_qty)
+                    )
+                    
+                    total_executed += executed_qty
+            
+            # Update order with execution details
+            otc_order.executed_quantity = total_executed
+            otc_order.executed_price = weighted_avg_price
+            otc_order.status = OTCOrderStatus.SETTLED if total_executed == otc_order.quantity else OTCOrderStatus.SETTLING
+            
+            db.commit()
+            
+            # Generate trade confirmation
+            await self.generate_trade_confirmation(otc_order)
+            
+            # Update client balances
+            await self.update_client_balances(otc_order)
+            
+            return {
+                "status": "executed",
+                "order_id": otc_order.order_id,
+                "executed_quantity": str(total_executed),
+                "executed_price": str(weighted_avg_price),
+                "total_value": str(total_executed * weighted_avg_price),
+                "settlement_date": otc_order.settlement_date.isoformat()
             }
             
-        finally:
-            await db.close()
-    
-    async def execute_rebalance_trade(self, client_id: str, trade: Dict[str, Any]):
-        """Execute individual rebalance trade"""
-        # Implementation for executing rebalance trades
-        pass
-    
-    async def generate_institutional_report(self, client_id: str, report_type: ReportType, 
-                                          start_date: datetime, end_date: datetime) -> bytes:
-        """Generate institutional reports"""
-        db = await get_db_connection()
-        try:
-            if report_type == ReportType.PORTFOLIO_PERFORMANCE:
-                data = await self.get_portfolio_performance_data(client_id, start_date, end_date)
-            elif report_type == ReportType.RISK_METRICS:
-                data = await self.get_risk_metrics_data(client_id, start_date, end_date)
-            elif report_type == ReportType.TRADE_COST_ANALYSIS:
-                data = await self.get_trade_cost_analysis_data(client_id, start_date, end_date)
-            else:
-                data = []
+        except Exception as e:
+            logger.error(f"Error executing OTC trade {otc_order.order_id}: {e}")
+            otc_order.status = OTCOrderStatus.CANCELLED
+            db.commit()
             
-            # Generate report
-            return await self.create_report_pdf(report_type, data, client_id, start_date, end_date)
-            
-        finally:
-            await db.close()
+            raise HTTPException(status_code=500, detail="Trade execution failed")
     
-    async def get_portfolio_performance_data(self, client_id: str, start_date: datetime, end_date: datetime):
-        """Get portfolio performance data"""
-        # Implementation for portfolio performance data
-        return []
+    async def get_market_price(self, symbol: str) -> Decimal:
+        """Get current market price for symbol"""
+        # This would integrate with market data providers
+        # Mock implementation
+        mock_prices = {
+            "BTCUSDT": Decimal("45000.00"),
+            "ETHUSDT": Decimal("3000.00"),
+            "BNBUSDT": Decimal("300.00")
+        }
+        
+        return mock_prices.get(symbol, Decimal("1.00"))
     
-    async def get_risk_metrics_data(self, client_id: str, start_date: datetime, end_date: datetime):
-        """Get risk metrics data"""
-        # Implementation for risk metrics data
-        return []
+    async def find_liquidity_sources(self, otc_order: OTCOrder) -> List[Dict[str, Any]]:
+        """Find liquidity sources for OTC order"""
+        # This would integrate with multiple liquidity providers
+        # Mock implementation
+        return [
+            {
+                "venue": "LP_BINANCE",
+                "available_quantity": otc_order.quantity * Decimal("0.6"),
+                "price": otc_order.quoted_price,
+                "fee": Decimal("0.001")
+            },
+            {
+                "venue": "LP_COINBASE",
+                "available_quantity": otc_order.quantity * Decimal("0.4"),
+                "price": otc_order.quoted_price * Decimal("1.001"),
+                "fee": Decimal("0.0015")
+            }
+        ]
     
-    async def get_trade_cost_analysis_data(self, client_id: str, start_date: datetime, end_date: datetime):
-        """Get trade cost analysis data"""
-        # Implementation for trade cost analysis data
-        return []
+    async def execute_at_venue(self, venue: Dict[str, Any], quantity: Decimal, order: OTCOrder) -> Dict[str, Any]:
+        """Execute trade at specific venue"""
+        # Mock execution
+        return {
+            "success": True,
+            "executed_quantity": quantity,
+            "executed_price": venue["price"],
+            "venue": venue["venue"],
+            "fee": venue["fee"] * quantity * venue["price"]
+        }
     
-    async def create_report_pdf(self, report_type: ReportType, data: List[Dict], 
-                              client_id: str, start_date: datetime, end_date: datetime) -> bytes:
-        """Create PDF report"""
-        # Implementation for PDF report generation
-        return b"PDF report content"
+    async def generate_trade_confirmation(self, otc_order: OTCOrder):
+        """Generate trade confirmation document"""
+        # This would generate PDF trade confirmation
+        logger.info(f"Generated trade confirmation for order {otc_order.order_id}")
+    
+    async def update_client_balances(self, otc_order: OTCOrder):
+        """Update client balances after trade execution"""
+        # This would update the client's balances
+        logger.info(f"Updated balances for client {otc_order.client_id} after order {otc_order.order_id}")
+    
+    async def send_welcome_email(self, client: InstitutionalClient):
+        """Send welcome email to new institutional client"""
+        # Mock implementation
+        logger.info(f"Sent welcome email to {client.primary_contact_email}")
+    
+    async def notify_compliance_team(self, otc_order: OTCOrder, reason: str):
+        """Notify compliance team of order requiring approval"""
+        logger.info(f"Notified compliance team about order {otc_order.order_id}: {reason}")
 
-# Initialize institutional services manager
-institutional_manager = InstitutionalServicesManager()
+# Risk Engine
+class RiskEngine:
+    async def check_otc_order(self, otc_order: OTCOrder, client: InstitutionalClient) -> 'RiskCheckResult':
+        """Perform risk checks on OTC order"""
+        
+        # Calculate order value
+        order_value = otc_order.quantity * otc_order.quoted_price
+        
+        # Check position limits
+        if order_value > client.credit_limit:
+            return RiskCheckResult(
+                approved=False,
+                reason=f"Order value ${order_value} exceeds credit limit ${client.credit_limit}"
+            )
+        
+        # Check concentration limits
+        # This would check against existing positions
+        
+        # Check VaR limits
+        # This would calculate impact on portfolio VaR
+        
+        return RiskCheckResult(approved=True, reason="All risk checks passed")
+
+@dataclass
+class RiskCheckResult:
+    approved: bool
+    reason: str
+    risk_score: Optional[int] = None
+
+# Compliance Engine
+class ComplianceEngine:
+    async def check_otc_order(self, otc_order: OTCOrder, client: InstitutionalClient) -> 'ComplianceCheckResult':
+        """Perform compliance checks on OTC order"""
+        
+        # Calculate order value
+        order_value = otc_order.quantity * otc_order.quoted_price
+        
+        # Check for large trade reporting requirements
+        if order_value > config.LARGE_TRADE_THRESHOLD:
+            # Would trigger regulatory reporting
+            pass
+        
+        # Check for suspicious activity
+        if order_value > config.SUSPICIOUS_ACTIVITY_THRESHOLD:
+            return ComplianceCheckResult(
+                approved=False,
+                reason=f"Large order value ${order_value} requires manual review"
+            )
+        
+        # Check client KYC status
+        if client.kyc_status != 'approved':
+            return ComplianceCheckResult(
+                approved=False,
+                reason="Client KYC not approved"
+            )
+        
+        return ComplianceCheckResult(approved=True, reason="All compliance checks passed")
+
+@dataclass
+class ComplianceCheckResult:
+    approved: bool
+    reason: str
+    requires_reporting: bool = False
+
+# Pricing Engine
+class PricingEngine:
+    async def calculate_otc_quote(
+        self,
+        base_asset: str,
+        quote_asset: str,
+        side: str,
+        quantity: Decimal,
+        market_price: Decimal,
+        client_tier: ServiceTier
+    ) -> Tuple[Decimal, Decimal, Decimal]:
+        """Calculate OTC quote price, spread, and market impact"""
+        
+        # Base spread based on client tier
+        tier_spreads = {
+            ServiceTier.WHITE_GLOVE: Decimal("0.0005"),  # 5 bps
+            ServiceTier.ELITE: Decimal("0.001"),         # 10 bps
+            ServiceTier.PREMIUM: Decimal("0.0015"),      # 15 bps
+            ServiceTier.BASIC: Decimal("0.002")          # 20 bps
+        }
+        
+        base_spread = tier_spreads.get(client_tier, Decimal("0.002"))
+        
+        # Calculate market impact based on order size
+        # Larger orders have higher market impact
+        order_value = quantity * market_price
+        
+        if order_value > Decimal("10000000"):  # $10M+
+            market_impact = Decimal("0.005")    # 50 bps
+        elif order_value > Decimal("1000000"): # $1M+
+            market_impact = Decimal("0.002")    # 20 bps
+        else:
+            market_impact = Decimal("0.001")    # 10 bps
+        
+        # Total spread
+        total_spread = base_spread + market_impact
+        
+        # Calculate quote price
+        if side == "BUY":
+            quote_price = market_price * (Decimal("1") + total_spread)
+        else:
+            quote_price = market_price * (Decimal("1") - total_spread)
+        
+        return quote_price, base_spread, market_impact
+
+# Initialize services manager
+services_manager = InstitutionalServicesManager()
+
+@app.on_event("startup")
+async def startup_event():
+    await services_manager.initialize()
 
 # API Endpoints
-
 @app.post("/api/v1/institutional/clients")
-async def create_institutional_client(request: CreateInstitutionalClientRequest):
+async def create_institutional_client(
+    client_data: InstitutionalClientCreate,
+    db: Session = Depends(get_db)
+):
     """Create new institutional client"""
     try:
-        client_id = await institutional_manager.create_institutional_client(request)
-        return {"client_id": client_id, "message": "Institutional client created successfully"}
+        client = await services_manager.create_institutional_client(client_data, db)
+        return {
+            "client_id": client.id,
+            "client_code": client.client_code,
+            "service_tier": client.service_tier,
+            "status": "created"
+        }
     except Exception as e:
         logger.error(f"Error creating institutional client: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create institutional client")
+        raise HTTPException(status_code=500, detail="Failed to create client")
 
-@app.post("/api/v1/institutional/orders")
-async def place_institutional_order(request: PlaceInstitutionalOrderRequest):
-    """Place institutional order"""
+@app.post("/api/v1/otc/quote")
+async def request_otc_quote(
+    order_request: OTCOrderRequest,
+    client: InstitutionalClient = Depends(get_current_institutional_client),
+    db: Session = Depends(get_db)
+):
+    """Request OTC quote"""
     try:
-        order_id = await institutional_manager.place_institutional_order(request)
-        return {"order_id": order_id, "message": "Institutional order placed successfully"}
+        quote = await services_manager.request_otc_quote(client, order_request, db)
+        return quote
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error placing institutional order: {e}")
-        raise HTTPException(status_code=500, detail="Failed to place institutional order")
+        logger.error(f"Error requesting OTC quote: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate quote")
 
-@app.post("/api/v1/institutional/otc-trades")
-async def execute_otc_trade(request: OTCTradeRequest):
-    """Execute OTC trade"""
+@app.post("/api/v1/otc/accept/{order_id}")
+async def accept_otc_quote(
+    order_id: str,
+    client: InstitutionalClient = Depends(get_current_institutional_client),
+    db: Session = Depends(get_db)
+):
+    """Accept OTC quote and execute trade"""
     try:
-        trade_id = await institutional_manager.execute_otc_trade(request)
-        return {"trade_id": trade_id, "message": "OTC trade executed successfully"}
-    except Exception as e:
-        logger.error(f"Error executing OTC trade: {e}")
-        raise HTTPException(status_code=500, detail="Failed to execute OTC trade")
-
-@app.post("/api/v1/institutional/custody")
-async def setup_custody_service(request: CustodyRequest):
-    """Setup custody service"""
-    try:
-        holding_id = await institutional_manager.setup_custody_service(request)
-        return {"holding_id": holding_id, "message": "Custody service setup successfully"}
-    except Exception as e:
-        logger.error(f"Error setting up custody service: {e}")
-        raise HTTPException(status_code=500, detail="Failed to setup custody service")
-
-@app.get("/api/v1/institutional/risk-metrics/{client_id}/{portfolio_id}")
-async def get_risk_metrics(client_id: str, portfolio_id: str):
-    """Get portfolio risk metrics"""
-    try:
-        risk_metrics = await institutional_manager.calculate_portfolio_risk_metrics(client_id, portfolio_id)
-        return asdict(risk_metrics)
-    except Exception as e:
-        logger.error(f"Error getting risk metrics: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get risk metrics")
-
-@app.post("/api/v1/institutional/rebalance")
-async def rebalance_portfolio(request: RebalanceRequest):
-    """Rebalance portfolio"""
-    try:
-        result = await institutional_manager.rebalance_portfolio(request)
+        result = await services_manager.accept_otc_quote(client, order_id, db)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error rebalancing portfolio: {e}")
-        raise HTTPException(status_code=500, detail="Failed to rebalance portfolio")
+        logger.error(f"Error accepting OTC quote: {e}")
+        raise HTTPException(status_code=500, detail="Failed to execute trade")
 
-@app.get("/api/v1/institutional/reports/{client_id}")
+@app.get("/api/v1/otc/orders")
+async def get_otc_orders(
+    client: InstitutionalClient = Depends(get_current_institutional_client),
+    db: Session = Depends(get_db),
+    status: Optional[str] = None,
+    limit: int = 50
+):
+    """Get OTC orders for client"""
+    query = db.query(OTCOrder).filter(OTCOrder.client_id == client.id)
+    
+    if status:
+        query = query.filter(OTCOrder.status == status)
+    
+    orders = query.order_by(OTCOrder.created_at.desc()).limit(limit).all()
+    
+    return {
+        "orders": [
+            {
+                "order_id": order.order_id,
+                "symbol": f"{order.base_asset}{order.quote_asset}",
+                "side": order.side,
+                "quantity": str(order.quantity),
+                "quoted_price": str(order.quoted_price) if order.quoted_price else None,
+                "status": order.status,
+                "created_at": order.created_at.isoformat()
+            }
+            for order in orders
+        ]
+    }
+
+@app.post("/api/v1/custody/accounts")
+async def create_custody_account(
+    account_data: CustodyAccountCreate,
+    client: InstitutionalClient = Depends(get_current_institutional_client),
+    db: Session = Depends(get_db)
+):
+    """Create custody account"""
+    account_id = f"{client.client_code}_CUSTODY_{int(datetime.now().timestamp())}"
+    
+    custody_account = CustodyAccount(
+        account_id=account_id,
+        client_id=client.id,
+        account_name=account_data.account_name,
+        custody_type=account_data.custody_type,
+        multi_sig_required=account_data.multi_sig_required,
+        required_signatures=account_data.required_signatures,
+        authorized_signers=account_data.authorized_signers,
+        insurance_coverage=account_data.insurance_coverage,
+        withdrawal_limits=account_data.withdrawal_limits
+    )
+    
+    db.add(custody_account)
+    db.commit()
+    db.refresh(custody_account)
+    
+    return {
+        "account_id": custody_account.account_id,
+        "custody_type": custody_account.custody_type,
+        "status": "created"
+    }
+
+@app.get("/api/v1/custody/accounts")
+async def get_custody_accounts(
+    client: InstitutionalClient = Depends(get_current_institutional_client),
+    db: Session = Depends(get_db)
+):
+    """Get custody accounts for client"""
+    accounts = db.query(CustodyAccount).filter(
+        CustodyAccount.client_id == client.id,
+        CustodyAccount.is_active == True
+    ).all()
+    
+    return {
+        "accounts": [
+            {
+                "account_id": account.account_id,
+                "account_name": account.account_name,
+                "custody_type": account.custody_type,
+                "multi_sig_required": account.multi_sig_required,
+                "insurance_coverage": str(account.insurance_coverage) if account.insurance_coverage else None,
+                "created_at": account.created_at.isoformat()
+            }
+            for account in accounts
+        ]
+    }
+
+@app.post("/api/v1/prime-brokerage/accounts")
+async def create_prime_brokerage_account(
+    account_data: PrimeBrokerageAccountCreate,
+    client: InstitutionalClient = Depends(get_current_institutional_client),
+    db: Session = Depends(get_db)
+):
+    """Create prime brokerage account"""
+    
+    # Check eligibility
+    if not client.aum or client.aum < config.PRIME_BROKERAGE_MIN_AUM:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Minimum AUM of ${config.PRIME_BROKERAGE_MIN_AUM} required for prime brokerage"
+        )
+    
+    account_id = f"{client.client_code}_PB"
+    
+    pb_account = PrimeBrokerageAccount(
+        account_id=account_id,
+        client_id=client.id,
+        base_currency=account_data.base_currency,
+        leverage_limit=account_data.leverage_limit,
+        margin_requirement=account_data.margin_requirement,
+        var_limit=account_data.var_limit
+    )
+    
+    db.add(pb_account)
+    db.commit()
+    db.refresh(pb_account)
+    
+    return {
+        "account_id": pb_account.account_id,
+        "base_currency": pb_account.base_currency,
+        "leverage_limit": str(pb_account.leverage_limit),
+        "status": "created"
+    }
+
+@app.post("/api/v1/reports/generate")
 async def generate_report(
-    client_id: str,
-    report_type: ReportType,
-    start_date: str,
-    end_date: str
+    report_request: ReportRequest,
+    client: InstitutionalClient = Depends(get_current_institutional_client),
+    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """Generate institutional report"""
-    try:
-        start_dt = datetime.fromisoformat(start_date)
-        end_dt = datetime.fromisoformat(end_date)
-        
-        report_data = await institutional_manager.generate_institutional_report(
-            client_id, report_type, start_dt, end_dt
-        )
-        
-        return StreamingResponse(
-            io.BytesIO(report_data),
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={report_type.value}_{client_id}_{start_date}_{end_date}.pdf"}
-        )
-    except Exception as e:
-        logger.error(f"Error generating report: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate report")
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
+    
+    report_id = f"RPT_{client.client_code}_{int(datetime.now().timestamp())}"
+    
+    report = InstitutionalReport(
+        report_id=report_id,
+        client_id=client.id,
+        report_type=report_request.report_type,
+        report_period_start=report_request.period_start,
+        report_period_end=report_request.period_end,
+        file_format=report_request.file_format,
+        delivery_method=report_request.delivery_method
+    )
+    
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    
+    # Generate report in background
+    background_tasks.add_task(generate_report_background, report.id, db)
+    
     return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0"
+        "report_id": report_id,
+        "status": "generating",
+        "estimated_completion": (datetime.now() + timedelta(minutes=5)).isoformat()
+    }
+
+async def generate_report_background(report_id: int, db: Session):
+    """Background task to generate report"""
+    # This would generate the actual report
+    logger.info(f"Generating report {report_id}")
+    
+    # Mock report generation
+    await asyncio.sleep(30)  # Simulate report generation time
+    
+    report = db.query(InstitutionalReport).filter(InstitutionalReport.id == report_id).first()
+    if report:
+        report.generated_at = datetime.now()
+        report.file_url = f"https://reports.tigerex.com/{report.report_id}.pdf"
+        report.delivery_status = "completed"
+        db.commit()
+
+@app.get("/api/v1/reports")
+async def get_reports(
+    client: InstitutionalClient = Depends(get_current_institutional_client),
+    db: Session = Depends(get_db),
+    report_type: Optional[str] = None,
+    limit: int = 20
+):
+    """Get reports for client"""
+    query = db.query(InstitutionalReport).filter(InstitutionalReport.client_id == client.id)
+    
+    if report_type:
+        query = query.filter(InstitutionalReport.report_type == report_type)
+    
+    reports = query.order_by(InstitutionalReport.created_at.desc()).limit(limit).all()
+    
+    return {
+        "reports": [
+            {
+                "report_id": report.report_id,
+                "report_type": report.report_type,
+                "period_start": report.report_period_start.isoformat(),
+                "period_end": report.report_period_end.isoformat(),
+                "file_format": report.file_format,
+                "delivery_status": report.delivery_status,
+                "file_url": report.file_url,
+                "created_at": report.created_at.isoformat()
+            }
+            for report in reports
+        ]
+    }
+
+@app.get("/api/v1/client/profile")
+async def get_client_profile(
+    client: InstitutionalClient = Depends(get_current_institutional_client)
+):
+    """Get institutional client profile"""
+    return {
+        "client_code": client.client_code,
+        "legal_name": client.legal_name,
+        "institution_type": client.institution_type,
+        "service_tier": client.service_tier,
+        "aum": str(client.aum) if client.aum else None,
+        "annual_trading_volume": str(client.annual_trading_volume) if client.annual_trading_volume else None,
+        "services_enabled": client.services_enabled,
+        "kyc_status": client.kyc_status,
+        "is_active": client.is_active,
+        "created_at": client.created_at.isoformat()
     }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8094)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
