@@ -1,167 +1,180 @@
--- Insert default blockchain configurations
+-- Insert Default Blockchain Configurations
+-- TigerEx Default Blockchain and Token Support
 
-INSERT INTO blockchains (
-    blockchain_id, name, symbol, network, rpc_url, chain_id, block_explorer_url,
-    is_testnet, supports_smart_contracts, native_currency_symbol, native_currency_decimals,
-    description, logo_url, website_url
+-- Insert default supported blockchains
+INSERT INTO custom_blockchains (
+    blockchain_id, name, symbol, description, chain_id, network_type, 
+    consensus_mechanism, block_time, gas_limit, rpc_url, ws_url, explorer_url,
+    deployment_status, created_by
 ) VALUES 
-(
-    'CHAIN_ETHEREUM', 'Ethereum', 'ETH', 'ethereum', 
-    'https://mainnet.infura.io/v3/your-key', 1, 'https://etherscan.io',
-    FALSE, TRUE, 'ETH', 18,
-    'Ethereum is a decentralized platform that runs smart contracts',
-    'https://ethereum.org/static/6b935ac0e6194247347855dc3d328e83/6ed5f/eth-diamond-black.webp',
-    'https://ethereum.org'
-),
-(
-    'CHAIN_POLYGON', 'Polygon', 'MATIC', 'polygon',
-    'https://polygon-rpc.com', 137, 'https://polygonscan.com',
-    FALSE, TRUE, 'MATIC', 18,
-    'Polygon is a decentralized Ethereum scaling platform',
-    'https://wallet-asset.matic.network/img/tokens/matic.svg',
-    'https://polygon.technology'
-),
-(
-    'CHAIN_BSC', 'BNB Smart Chain', 'BNB', 'bsc',
-    'https://bsc-dataseed.binance.org', 56, 'https://bscscan.com',
-    FALSE, TRUE, 'BNB', 18,
-    'BNB Smart Chain is a blockchain network built for running smart contract-based applications',
-    'https://bin.bnbstatic.com/static/images/common/favicon.ico',
-    'https://www.bnbchain.org'
-),
-(
-    'CHAIN_ARBITRUM', 'Arbitrum One', 'ETH', 'arbitrum',
-    'https://arb1.arbitrum.io/rpc', 42161, 'https://arbiscan.io',
-    FALSE, TRUE, 'ETH', 18,
-    'Arbitrum is a Layer 2 scaling solution for Ethereum',
-    'https://bridge.arbitrum.io/logo.png',
-    'https://arbitrum.io'
-),
-(
-    'CHAIN_OPTIMISM', 'Optimism', 'ETH', 'optimism',
-    'https://mainnet.optimism.io', 10, 'https://optimistic.etherscan.io',
-    FALSE, TRUE, 'ETH', 18,
-    'Optimism is a Layer 2 scaling solution for Ethereum using optimistic rollups',
-    'https://optimism.io/images/optimism.svg',
-    'https://optimism.io'
-),
-(
-    'CHAIN_AVALANCHE', 'Avalanche C-Chain', 'AVAX', 'avalanche',
-    'https://api.avax.network/ext/bc/C/rpc', 43114, 'https://snowtrace.io',
-    FALSE, TRUE, 'AVAX', 18,
-    'Avalanche is a high-performance, scalable, customizable, and secure blockchain platform',
-    'https://cryptologos.cc/logos/avalanche-avax-logo.svg',
-    'https://avax.network'
+-- Ethereum Mainnet
+('ETH_MAINNET', 'Ethereum', 'ETH', 'Ethereum Mainnet - The original smart contract platform', 
+ 1, 'mainnet', 'Proof of Stake', 12, 30000000,
+ 'https://mainnet.infura.io/v3/YOUR_PROJECT_ID', 'wss://mainnet.infura.io/ws/v3/YOUR_PROJECT_ID',
+ 'https://etherscan.io', 'deployed', 'system'),
+
+-- Binance Smart Chain
+('BSC_MAINNET', 'Binance Smart Chain', 'BNB', 'Binance Smart Chain - Fast and low-cost blockchain',
+ 56, 'mainnet', 'Proof of Staked Authority', 3, 50000000,
+ 'https://bsc-dataseed.binance.org', 'wss://bsc-ws-node.nariox.org:443',
+ 'https://bscscan.com', 'deployed', 'system'),
+
+-- Polygon
+('POLYGON_MAINNET', 'Polygon', 'MATIC', 'Polygon - Ethereum scaling solution',
+ 137, 'mainnet', 'Proof of Stake', 2, 30000000,
+ 'https://polygon-rpc.com', 'wss://polygon-rpc.com',
+ 'https://polygonscan.com', 'deployed', 'system'),
+
+-- Arbitrum One
+('ARBITRUM_ONE', 'Arbitrum One', 'ETH', 'Arbitrum One - Ethereum Layer 2 scaling solution',
+ 42161, 'mainnet', 'Optimistic Rollup', 1, 32000000,
+ 'https://arb1.arbitrum.io/rpc', 'wss://arb1.arbitrum.io/ws',
+ 'https://arbiscan.io', 'deployed', 'system'),
+
+-- Optimism
+('OPTIMISM_MAINNET', 'Optimism', 'ETH', 'Optimism - Ethereum Layer 2 scaling solution',
+ 10, 'mainnet', 'Optimistic Rollup', 2, 30000000,
+ 'https://mainnet.optimism.io', 'wss://mainnet.optimism.io',
+ 'https://optimistic.etherscan.io', 'deployed', 'system'),
+
+-- Avalanche C-Chain
+('AVALANCHE_C', 'Avalanche C-Chain', 'AVAX', 'Avalanche C-Chain - High-performance blockchain',
+ 43114, 'mainnet', 'Avalanche Consensus', 2, 15000000,
+ 'https://api.avax.network/ext/bc/C/rpc', 'wss://api.avax.network/ext/bc/C/ws',
+ 'https://snowtrace.io', 'deployed', 'system'),
+
+-- Fantom Opera
+('FANTOM_OPERA', 'Fantom Opera', 'FTM', 'Fantom Opera - Fast and secure blockchain',
+ 250, 'mainnet', 'Lachesis Consensus', 1, 10000000,
+ 'https://rpc.ftm.tools', 'wss://wsapi.fantom.network',
+ 'https://ftmscan.com', 'deployed', 'system'),
+
+-- Solana (Non-EVM)
+('SOLANA_MAINNET', 'Solana', 'SOL', 'Solana - High-performance blockchain',
+ 0, 'mainnet', 'Proof of History', 1, 0,
+ 'https://api.mainnet-beta.solana.com', 'wss://api.mainnet-beta.solana.com',
+ 'https://explorer.solana.com', 'deployed', 'system'),
+
+-- TigerChain (Custom)
+('TIGER_MAINNET', 'TigerChain', 'TIGER', 'TigerEx native blockchain for advanced trading features',
+ 88888, 'mainnet', 'Delegated Proof of Stake', 1, 50000000,
+ 'https://rpc.tigerchain.com', 'wss://ws.tigerchain.com',
+ 'https://explorer.tigerchain.com', 'deployed', 'system');
+
+-- Insert default system settings
+INSERT INTO system_settings (setting_key, setting_value, setting_type, description, is_public) VALUES
+('supported_blockchains', '["ETH_MAINNET", "BSC_MAINNET", "POLYGON_MAINNET", "ARBITRUM_ONE", "OPTIMISM_MAINNET", "AVALANCHE_C", "FANTOM_OPERA", "SOLANA_MAINNET", "TIGER_MAINNET"]', 'array', 'List of supported blockchain networks', true),
+('default_gas_prices', '{"ETH_MAINNET": 20, "BSC_MAINNET": 5, "POLYGON_MAINNET": 30, "ARBITRUM_ONE": 0.1, "OPTIMISM_MAINNET": 0.001, "AVALANCHE_C": 25, "FANTOM_OPERA": 100}', 'object', 'Default gas prices in Gwei for each network', true),
+('max_deployment_time', '3600', 'number', 'Maximum deployment time in seconds', false),
+('auto_ssl_enabled', 'true', 'boolean', 'Enable automatic SSL certificate generation', false),
+('default_domain_suffix', '.tigerex.com', 'string', 'Default domain suffix for deployments', false);
+
+-- Insert default DEX configurations
+INSERT INTO custom_dexs (
+    dex_id, name, symbol, description, blockchain_id, 
+    router_contract, factory_contract, weth_contract,
+    deployment_status, created_by
+) VALUES
+-- Ethereum DEXs
+('UNISWAP_V3_ETH', 'Uniswap V3', 'UNI', 'Uniswap V3 on Ethereum', 1,
+ '0xE592427A0AEce92De3Edee1F18E0157C05861564', '0x1F98431c8aD98523631AE4a59f267346ea31F984', '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+ 'deployed', 'system'),
+
+-- BSC DEXs  
+('PANCAKESWAP_V3_BSC', 'PancakeSwap V3', 'CAKE', 'PancakeSwap V3 on BSC', 2,
+ '0x13f4EA83D0bd40E75C8222255bc855a974568Dd4', '0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865', '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
+ 'deployed', 'system'),
+
+-- Polygon DEXs
+('QUICKSWAP_POLYGON', 'QuickSwap', 'QUICK', 'QuickSwap on Polygon', 3,
+ '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff', '0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32', '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
+ 'deployed', 'system');
+
+-- Insert default block explorers
+INSERT INTO block_explorers (
+    explorer_id, name, blockchain_id, api_url, frontend_url, websocket_url,
+    supported_features, deployment_status, created_by
+) VALUES
+('ETHERSCAN', 'Etherscan', 1, 'https://api.etherscan.io/api', 'https://etherscan.io', 'wss://etherscan.io/ws',
+ '["transactions", "blocks", "addresses", "tokens", "contracts", "analytics"]', 'deployed', 'system'),
+
+('BSCSCAN', 'BscScan', 2, 'https://api.bscscan.com/api', 'https://bscscan.com', 'wss://bscscan.com/ws',
+ '["transactions", "blocks", "addresses", "tokens", "contracts", "analytics"]', 'deployed', 'system'),
+
+('POLYGONSCAN', 'PolygonScan', 3, 'https://api.polygonscan.com/api', 'https://polygonscan.com', 'wss://polygonscan.com/ws',
+ '["transactions", "blocks", "addresses", "tokens", "contracts", "analytics"]', 'deployed', 'system'),
+
+('TIGER_EXPLORER', 'TigerExplorer', 9, 'https://api.explorer.tigerchain.com/api', 'https://explorer.tigerchain.com', 'wss://explorer.tigerchain.com/ws',
+ '["transactions", "blocks", "addresses", "tokens", "contracts", "analytics", "staking", "governance"]', 'deployed', 'system');
+
+-- Insert default wallet systems
+INSERT INTO wallet_systems (
+    wallet_id, name, wallet_type, description, supported_blockchains, 
+    supported_tokens, security_features, deployment_status, created_by
+) VALUES
+('TIGER_HOT_WALLET', 'TigerEx Hot Wallet', 'hot', 'High-performance hot wallet for trading',
+ '["ETH_MAINNET", "BSC_MAINNET", "POLYGON_MAINNET", "ARBITRUM_ONE", "OPTIMISM_MAINNET", "AVALANCHE_C", "FANTOM_OPERA", "TIGER_MAINNET"]',
+ '["ETH", "BTC", "BNB", "MATIC", "AVAX", "FTM", "TIGER", "USDT", "USDC", "DAI"]',
+ '["multi_signature", "hardware_security_module", "cold_storage_backup", "real_time_monitoring"]',
+ 'deployed', 'system'),
+
+('TIGER_COLD_WALLET', 'TigerEx Cold Wallet', 'cold', 'Ultra-secure cold storage wallet',
+ '["ETH_MAINNET", "BSC_MAINNET", "POLYGON_MAINNET", "TIGER_MAINNET"]',
+ '["ETH", "BTC", "BNB", "MATIC", "TIGER", "USDT", "USDC"]',
+ '["air_gapped", "multi_signature", "hardware_security_module", "geographic_distribution"]',
+ 'deployed', 'system'),
+
+('TIGER_CUSTODIAL', 'TigerEx Custodial Wallet', 'custodial', 'Institutional-grade custodial wallet service',
+ '["ETH_MAINNET", "BSC_MAINNET", "POLYGON_MAINNET", "ARBITRUM_ONE", "OPTIMISM_MAINNET", "AVALANCHE_C", "TIGER_MAINNET"]',
+ '["ETH", "BTC", "BNB", "MATIC", "AVAX", "TIGER", "USDT", "USDC", "DAI", "WBTC"]',
+ '["insurance_coverage", "regulatory_compliance", "audit_trail", "multi_signature", "cold_storage"]',
+ 'deployed', 'system'),
+
+('TIGER_NON_CUSTODIAL', 'TigerEx Non-Custodial Wallet', 'non_custodial', 'User-controlled non-custodial wallet',
+ '["ETH_MAINNET", "BSC_MAINNET", "POLYGON_MAINNET", "ARBITRUM_ONE", "OPTIMISM_MAINNET", "AVALANCHE_C", "FANTOM_OPERA", "SOLANA_MAINNET", "TIGER_MAINNET"]',
+ '["ETH", "BTC", "BNB", "MATIC", "AVAX", "FTM", "SOL", "TIGER", "USDT", "USDC", "DAI", "WBTC", "LINK", "UNI", "AAVE"]',
+ '["seed_phrase_backup", "hardware_wallet_support", "biometric_authentication", "social_recovery"]',
+ 'deployed', 'system');
+
+-- Insert default admin permissions
+INSERT INTO system_settings (setting_key, setting_value, setting_type, description, is_public, required_permission) VALUES
+('admin_permissions', '{
+  "super_admin": ["*"],
+  "blockchain_admin": ["blockchain:*", "dex:*", "explorer:*"],
+  "exchange_admin": ["exchange:*", "wallet:*"],
+  "support_admin": ["user:read", "ticket:*", "kyc:read"],
+  "compliance_admin": ["kyc:*", "aml:*", "compliance:*"],
+  "technical_admin": ["system:read", "deployment:read", "monitoring:*"]
+}', 'object', 'Default admin permission sets', false, 'admin:manage'),
+
+('deployment_templates', '{
+  "blockchain": {
+    "ethereum_compatible": {
+      "docker_image": "ethereum/client-go:latest",
+      "required_resources": {"cpu": "2", "memory": "4Gi", "storage": "100Gi"},
+      "default_ports": [8545, 8546, 30303]
+    },
+    "substrate": {
+      "docker_image": "parity/substrate:latest", 
+      "required_resources": {"cpu": "4", "memory": "8Gi", "storage": "200Gi"},
+      "default_ports": [9944, 9933, 30333]
+    }
+  },
+  "dex": {
+    "uniswap_v3": {
+      "contracts": ["UniswapV3Factory", "UniswapV3Router", "NonfungiblePositionManager"],
+      "required_tokens": ["WETH", "USDC", "USDT"]
+    }
+  }
+}', 'object', 'Deployment templates for different resource types', false, 'admin:deploy');
+
+-- Create default super admin (should be updated with real credentials)
+INSERT INTO admin_users (
+    admin_id, user_id, admin_level, department, position,
+    permissions, access_level, created_by
+) VALUES (
+    'SUPER_ADMIN_001', 'system_admin', 3, 'Technology', 'Chief Technology Officer',
+    '["*"]', 10, 'system'
 );
 
--- Insert default tokens (major cryptocurrencies)
-INSERT INTO tokens (
-    token_id, name, symbol, decimals, blockchain_id, token_standard,
-    description, logo_url, website_url, coingecko_id, status, is_verified, verification_level
-) VALUES 
-(
-    'TOKEN_ETH', 'Ethereum', 'ETH', 18, 
-    (SELECT id FROM blockchains WHERE blockchain_id = 'CHAIN_ETHEREUM'),
-    'NATIVE',
-    'Ethereum is a decentralized platform that runs smart contracts',
-    'https://ethereum.org/static/6b935ac0e6194247347855dc3d328e83/6ed5f/eth-diamond-black.webp',
-    'https://ethereum.org',
-    'ethereum',
-    'active', TRUE, 5
-),
-(
-    'TOKEN_MATIC', 'Polygon', 'MATIC', 18,
-    (SELECT id FROM blockchains WHERE blockchain_id = 'CHAIN_POLYGON'),
-    'NATIVE',
-    'Polygon is a decentralized Ethereum scaling platform',
-    'https://wallet-asset.matic.network/img/tokens/matic.svg',
-    'https://polygon.technology',
-    'matic-network',
-    'active', TRUE, 5
-),
-(
-    'TOKEN_BNB', 'BNB', 'BNB', 18,
-    (SELECT id FROM blockchains WHERE blockchain_id = 'CHAIN_BSC'),
-    'NATIVE',
-    'BNB is the native token of BNB Smart Chain',
-    'https://bin.bnbstatic.com/static/images/common/favicon.ico',
-    'https://www.bnbchain.org',
-    'binancecoin',
-    'active', TRUE, 5
-),
-(
-    'TOKEN_AVAX', 'Avalanche', 'AVAX', 18,
-    (SELECT id FROM blockchains WHERE blockchain_id = 'CHAIN_AVALANCHE'),
-    'NATIVE',
-    'AVAX is the native token of Avalanche platform',
-    'https://cryptologos.cc/logos/avalanche-avax-logo.svg',
-    'https://avax.network',
-    'avalanche-2',
-    'active', TRUE, 5
-);
-
--- Insert USDT on multiple chains
-INSERT INTO tokens (
-    token_id, name, symbol, decimals, blockchain_id, contract_address, token_standard,
-    description, logo_url, website_url, coingecko_id, status, is_verified, verification_level
-) VALUES 
-(
-    'TOKEN_USDT_ETH', 'Tether USD', 'USDT', 6,
-    (SELECT id FROM blockchains WHERE blockchain_id = 'CHAIN_ETHEREUM'),
-    '0xdAC17F958D2ee523a2206206994597C13D831ec7', 'ERC20',
-    'Tether USD is a stablecoin pegged to the US Dollar',
-    'https://tether.to/images/logoCircle.png',
-    'https://tether.to',
-    'tether',
-    'active', TRUE, 5
-),
-(
-    'TOKEN_USDT_POLYGON', 'Tether USD', 'USDT', 6,
-    (SELECT id FROM blockchains WHERE blockchain_id = 'CHAIN_POLYGON'),
-    '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', 'ERC20',
-    'Tether USD is a stablecoin pegged to the US Dollar',
-    'https://tether.to/images/logoCircle.png',
-    'https://tether.to',
-    'tether',
-    'active', TRUE, 5
-),
-(
-    'TOKEN_USDT_BSC', 'Tether USD', 'USDT', 18,
-    (SELECT id FROM blockchains WHERE blockchain_id = 'CHAIN_BSC'),
-    '0x55d398326f99059fF775485246999027B3197955', 'BEP20',
-    'Tether USD is a stablecoin pegged to the US Dollar',
-    'https://tether.to/images/logoCircle.png',
-    'https://tether.to',
-    'tether',
-    'active', TRUE, 5
-);
-
--- Insert default trading pairs
-INSERT INTO trading_pairs (
-    pair_id, base_token_id, quote_token_id, symbol, min_order_size,
-    price_precision, quantity_precision, maker_fee, taker_fee
-) VALUES 
-(
-    'PAIR_ETHUSDT', 
-    (SELECT id FROM tokens WHERE token_id = 'TOKEN_ETH'),
-    (SELECT id FROM tokens WHERE token_id = 'TOKEN_USDT_ETH'),
-    'ETHUSDT', 0.001, 2, 6, 0.001, 0.001
-),
-(
-    'PAIR_BNBUSDT',
-    (SELECT id FROM tokens WHERE token_id = 'TOKEN_BNB'),
-    (SELECT id FROM tokens WHERE token_id = 'TOKEN_USDT_BSC'),
-    'BNBUSDT', 0.01, 2, 6, 0.001, 0.001
-),
-(
-    'PAIR_MATICUSDT',
-    (SELECT id FROM tokens WHERE token_id = 'TOKEN_MATIC'),
-    (SELECT id FROM tokens WHERE token_id = 'TOKEN_USDT_POLYGON'),
-    'MATICUSDT', 1.0, 4, 2, 0.001, 0.001
-),
-(
-    'PAIR_AVAXUSDT',
-    (SELECT id FROM tokens WHERE token_id = 'TOKEN_AVAX'),
-    (SELECT id FROM tokens WHERE token_id = 'TOKEN_USDT_ETH'),
-    'AVAXUSDT', 0.01, 2, 4, 0.001, 0.001
-);
+COMMIT;

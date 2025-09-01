@@ -1,158 +1,334 @@
--- Admin Panel Tables
+-- Admin Panel and Blockchain Management Tables
+-- TigerEx Advanced Admin System
 
--- Blockchains table
-CREATE TABLE IF NOT EXISTS blockchains (
+-- Admin Users Table (extends user_auth)
+CREATE TABLE admin_users (
+    id SERIAL PRIMARY KEY,
+    admin_id VARCHAR(50) UNIQUE NOT NULL,
+    user_id VARCHAR(50) NOT NULL, -- References user_auth.user_id
+    
+    -- Admin Info
+    admin_level INTEGER NOT NULL DEFAULT 1, -- 1=basic, 2=senior, 3=super
+    department VARCHAR(100),
+    position VARCHAR(100),
+    manager_id VARCHAR(50),
+    
+    -- Permissions
+    permissions JSONB DEFAULT '[]',
+    access_level INTEGER DEFAULT 1, -- 1-10 access levels
+    
+    -- Status
+    is_active BOOLEAN DEFAULT TRUE,
+    is_suspended BOOLEAN DEFAULT FALSE,
+    suspension_reason TEXT,
+    
+    -- Performance Metrics
+    tickets_handled INTEGER DEFAULT 0,
+    avg_response_time DECIMAL(10,2) DEFAULT 0,
+    customer_satisfaction DECIMAL(3,2) DEFAULT 0,
+    
+    -- Audit
+    created_by VARCHAR(50),
+    approved_by VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Custom Blockchains Table
+CREATE TABLE custom_blockchains (
     id SERIAL PRIMARY KEY,
     blockchain_id VARCHAR(50) UNIQUE NOT NULL,
+    
+    -- Basic Info
     name VARCHAR(100) NOT NULL,
     symbol VARCHAR(10) NOT NULL,
-    network VARCHAR(20) NOT NULL,
-    rpc_url VARCHAR(500) NOT NULL,
-    chain_id INTEGER NOT NULL,
-    block_explorer_url VARCHAR(500),
-    is_testnet BOOLEAN DEFAULT FALSE,
-    supports_smart_contracts BOOLEAN DEFAULT TRUE,
-    native_currency_symbol VARCHAR(10) NOT NULL,
-    native_currency_decimals INTEGER DEFAULT 18,
-    is_active BOOLEAN DEFAULT TRUE,
-    is_trading_enabled BOOLEAN DEFAULT TRUE,
-    is_deposit_enabled BOOLEAN DEFAULT TRUE,
-    is_withdrawal_enabled BOOLEAN DEFAULT TRUE,
-    gas_price_gwei DECIMAL(20,8),
-    withdrawal_fee DECIMAL(20,8),
-    min_withdrawal_amount DECIMAL(20,8),
     description TEXT,
-    logo_url VARCHAR(500),
-    website_url VARCHAR(500),
-    documentation_url VARCHAR(500),
+    
+    -- Network Configuration
+    chain_id INTEGER UNIQUE NOT NULL,
+    network_type VARCHAR(20) NOT NULL, -- mainnet, testnet, devnet
+    consensus_mechanism VARCHAR(50) NOT NULL, -- PoS, PoW, DPoS, etc.
+    
+    -- Technical Details
+    block_time INTEGER NOT NULL, -- in seconds
+    gas_limit BIGINT DEFAULT 30000000,
+    gas_price_gwei DECIMAL(20,8) DEFAULT 20,
+    
+    -- URLs
+    rpc_url VARCHAR(500),
+    ws_url VARCHAR(500),
+    explorer_url VARCHAR(500),
+    
+    -- Deployment Info
+    deployment_status VARCHAR(20) DEFAULT 'pending', -- pending, deploying, deployed, failed
+    deployment_config JSONB,
+    docker_image VARCHAR(200),
+    k8s_namespace VARCHAR(100),
+    
+    -- Domain and SSL
+    domain_name VARCHAR(200),
+    ssl_certificate TEXT,
+    
+    -- Performance Metrics
+    current_block_height BIGINT DEFAULT 0,
+    total_transactions BIGINT DEFAULT 0,
+    active_validators INTEGER DEFAULT 0,
+    
+    -- Created by
+    created_by VARCHAR(50) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Tokens table
-CREATE TABLE IF NOT EXISTS tokens (
+-- Custom DEXs Table
+CREATE TABLE custom_dexs (
     id SERIAL PRIMARY KEY,
-    token_id VARCHAR(50) UNIQUE NOT NULL,
+    dex_id VARCHAR(50) UNIQUE NOT NULL,
+    
+    -- Basic Info
     name VARCHAR(100) NOT NULL,
-    symbol VARCHAR(20) NOT NULL,
-    decimals INTEGER NOT NULL DEFAULT 18,
-    blockchain_id INTEGER REFERENCES blockchains(id) ON DELETE CASCADE,
-    contract_address VARCHAR(100),
-    token_standard VARCHAR(10) NOT NULL,
-    total_supply DECIMAL(30,8),
-    circulating_supply DECIMAL(30,8),
-    max_supply DECIMAL(30,8),
-    current_price_usd DECIMAL(20,8),
-    market_cap_usd DECIMAL(20,2),
-    volume_24h_usd DECIMAL(20,2),
-    price_change_24h DECIMAL(10,4),
-    coingecko_id VARCHAR(100),
-    coinmarketcap_id VARCHAR(100),
+    symbol VARCHAR(10) NOT NULL,
     description TEXT,
+    
+    -- Blockchain Reference
+    blockchain_id INTEGER REFERENCES custom_blockchains(id),
+    
+    -- Smart Contracts
+    router_contract VARCHAR(100),
+    factory_contract VARCHAR(100),
+    weth_contract VARCHAR(100),
+    multicall_contract VARCHAR(100),
+    
+    -- Fee Configuration
+    swap_fee DECIMAL(5,4) DEFAULT 0.003, -- 0.3%
+    protocol_fee DECIMAL(5,4) DEFAULT 0.0005, -- 0.05%
+    
+    -- Deployment Info
+    deployment_status VARCHAR(20) DEFAULT 'pending',
+    deployment_config JSONB,
+    frontend_url VARCHAR(500),
+    
+    -- Domain and SSL
+    domain_name VARCHAR(200),
+    ssl_certificate TEXT,
+    
+    -- Performance Metrics
+    total_volume DECIMAL(30,8) DEFAULT 0,
+    total_trades BIGINT DEFAULT 0,
+    active_pairs INTEGER DEFAULT 0,
+    
+    -- Created by
+    created_by VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- White Label Exchanges Table
+CREATE TABLE whitelabel_exchanges (
+    id SERIAL PRIMARY KEY,
+    exchange_id VARCHAR(50) UNIQUE NOT NULL,
+    
+    -- Basic Info
+    name VARCHAR(100) NOT NULL,
+    brand_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    
+    -- Exchange Type
+    exchange_type VARCHAR(20) NOT NULL, -- cex, dex, hybrid
+    
+    -- Branding
     logo_url VARCHAR(500),
-    website_url VARCHAR(500),
-    whitepaper_url VARCHAR(500),
-    twitter_url VARCHAR(500),
-    telegram_url VARCHAR(500),
-    discord_url VARCHAR(500),
-    github_url VARCHAR(500),
-    is_tradable BOOLEAN DEFAULT TRUE,
-    min_trade_amount DECIMAL(20,8),
-    max_trade_amount DECIMAL(20,8),
-    is_deposit_enabled BOOLEAN DEFAULT TRUE,
-    is_withdrawal_enabled BOOLEAN DEFAULT TRUE,
-    min_deposit_amount DECIMAL(20,8),
-    min_withdrawal_amount DECIMAL(20,8),
-    withdrawal_fee DECIMAL(20,8),
-    status VARCHAR(20) DEFAULT 'pending',
-    listing_date TIMESTAMP,
-    delisting_date TIMESTAMP,
-    is_verified BOOLEAN DEFAULT FALSE,
-    verification_level INTEGER DEFAULT 0,
-    risk_score INTEGER DEFAULT 50,
-    risk_factors JSONB,
+    primary_color VARCHAR(7), -- Hex color
+    secondary_color VARCHAR(7),
+    favicon_url VARCHAR(500),
+    custom_css TEXT,
+    
+    -- Configuration
+    supported_features JSONB DEFAULT '[]',
+    trading_pairs JSONB DEFAULT '[]',
+    payment_methods JSONB DEFAULT '[]',
+    supported_countries JSONB DEFAULT '[]',
+    
+    -- Deployment Info
+    deployment_status VARCHAR(20) DEFAULT 'pending',
+    deployment_config JSONB,
+    frontend_url VARCHAR(500),
+    api_url VARCHAR(500),
+    admin_url VARCHAR(500),
+    
+    -- Domain and SSL
+    domain_name VARCHAR(200),
+    ssl_certificate TEXT,
+    
+    -- Client Info
+    client_id VARCHAR(50) NOT NULL,
+    client_email VARCHAR(255) NOT NULL,
+    client_company VARCHAR(200),
+    
+    -- Billing
+    monthly_fee DECIMAL(20,2) DEFAULT 0,
+    transaction_fee_percentage DECIMAL(5,4) DEFAULT 0,
+    
+    -- Created by
+    created_by VARCHAR(50) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Trading pairs table
-CREATE TABLE IF NOT EXISTS trading_pairs (
+-- Block Explorers Table
+CREATE TABLE block_explorers (
     id SERIAL PRIMARY KEY,
-    pair_id VARCHAR(50) UNIQUE NOT NULL,
-    base_token_id INTEGER REFERENCES tokens(id) ON DELETE CASCADE,
-    quote_token_id INTEGER REFERENCES tokens(id) ON DELETE CASCADE,
-    symbol VARCHAR(20) NOT NULL UNIQUE,
-    min_order_size DECIMAL(20,8) NOT NULL,
-    max_order_size DECIMAL(20,8),
-    min_price DECIMAL(20,8),
-    max_price DECIMAL(20,8),
-    price_precision INTEGER DEFAULT 8,
-    quantity_precision INTEGER DEFAULT 8,
-    maker_fee DECIMAL(5,4) DEFAULT 0.001,
-    taker_fee DECIMAL(5,4) DEFAULT 0.001,
-    last_price DECIMAL(20,8),
-    volume_24h DECIMAL(30,8) DEFAULT 0,
-    high_24h DECIMAL(20,8),
-    low_24h DECIMAL(20,8),
-    price_change_24h DECIMAL(10,4) DEFAULT 0,
-    status VARCHAR(20) DEFAULT 'active',
-    is_spot_enabled BOOLEAN DEFAULT TRUE,
-    is_margin_enabled BOOLEAN DEFAULT FALSE,
-    is_futures_enabled BOOLEAN DEFAULT FALSE,
-    listed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    delisted_at TIMESTAMP,
+    explorer_id VARCHAR(50) UNIQUE NOT NULL,
+    
+    -- Basic Info
+    name VARCHAR(100) NOT NULL,
+    blockchain_id INTEGER REFERENCES custom_blockchains(id),
+    
+    -- Configuration
+    api_url VARCHAR(500),
+    frontend_url VARCHAR(500),
+    websocket_url VARCHAR(500),
+    
+    -- Features
+    supported_features JSONB DEFAULT '[]',
+    
+    -- Deployment Info
+    deployment_status VARCHAR(20) DEFAULT 'pending',
+    deployment_config JSONB,
+    
+    -- Domain and SSL
+    domain_name VARCHAR(200),
+    ssl_certificate TEXT,
+    
+    -- Created by
+    created_by VARCHAR(50) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Token listings table
-CREATE TABLE IF NOT EXISTS token_listings (
+-- Wallet Systems Table
+CREATE TABLE wallet_systems (
     id SERIAL PRIMARY KEY,
-    listing_id VARCHAR(50) UNIQUE NOT NULL,
-    token_name VARCHAR(100) NOT NULL,
-    token_symbol VARCHAR(20) NOT NULL,
-    blockchain_network VARCHAR(20) NOT NULL,
-    contract_address VARCHAR(100),
-    applicant_name VARCHAR(100) NOT NULL,
-    applicant_email VARCHAR(255) NOT NULL,
-    company_name VARCHAR(255),
-    total_supply DECIMAL(30,8),
-    circulating_supply DECIMAL(30,8),
-    token_description TEXT,
-    use_case TEXT,
-    whitepaper_url VARCHAR(500),
-    audit_report_url VARCHAR(500),
-    legal_opinion_url VARCHAR(500),
-    current_exchanges JSONB,
-    trading_volume DECIMAL(20,2),
-    market_cap DECIMAL(20,2),
-    status VARCHAR(20) DEFAULT 'pending',
-    review_notes TEXT,
-    reviewed_by VARCHAR(50),
-    reviewed_at TIMESTAMP,
-    listing_fee_paid BOOLEAN DEFAULT FALSE,
-    listing_fee_amount DECIMAL(20,2),
+    wallet_id VARCHAR(50) UNIQUE NOT NULL,
+    
+    -- Basic Info
+    name VARCHAR(100) NOT NULL,
+    wallet_type VARCHAR(50) NOT NULL, -- hot, cold, custodial, non-custodial
+    description TEXT,
+    
+    -- Configuration
+    supported_blockchains JSONB DEFAULT '[]',
+    supported_tokens JSONB DEFAULT '[]',
+    security_features JSONB DEFAULT '[]',
+    
+    -- Deployment Info
+    deployment_status VARCHAR(20) DEFAULT 'pending',
+    deployment_config JSONB,
+    
+    -- Created by
+    created_by VARCHAR(50) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for performance
-CREATE INDEX IF NOT EXISTS idx_blockchains_blockchain_id ON blockchains(blockchain_id);
-CREATE INDEX IF NOT EXISTS idx_blockchains_network ON blockchains(network);
-CREATE INDEX IF NOT EXISTS idx_blockchains_chain_id ON blockchains(chain_id);
+-- Admin Activity Log
+CREATE TABLE admin_activity_log (
+    id SERIAL PRIMARY KEY,
+    activity_id VARCHAR(50) UNIQUE NOT NULL,
+    
+    -- Admin Info
+    admin_id VARCHAR(50) NOT NULL,
+    admin_username VARCHAR(100),
+    
+    -- Activity Info
+    activity_type VARCHAR(50) NOT NULL,
+    resource_type VARCHAR(50), -- blockchain, dex, exchange, etc.
+    resource_id VARCHAR(50),
+    
+    -- Details
+    action VARCHAR(100) NOT NULL,
+    description TEXT,
+    old_values JSONB,
+    new_values JSONB,
+    
+    -- Context
+    ip_address INET,
+    user_agent TEXT,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-CREATE INDEX IF NOT EXISTS idx_tokens_token_id ON tokens(token_id);
-CREATE INDEX IF NOT EXISTS idx_tokens_symbol ON tokens(symbol);
-CREATE INDEX IF NOT EXISTS idx_tokens_blockchain_id ON tokens(blockchain_id);
-CREATE INDEX IF NOT EXISTS idx_tokens_contract_address ON tokens(contract_address);
-CREATE INDEX IF NOT EXISTS idx_tokens_status ON tokens(status);
+-- System Settings Table
+CREATE TABLE system_settings (
+    id SERIAL PRIMARY KEY,
+    setting_key VARCHAR(100) UNIQUE NOT NULL,
+    setting_value JSONB NOT NULL,
+    setting_type VARCHAR(50) NOT NULL, -- string, number, boolean, object, array
+    description TEXT,
+    
+    -- Access Control
+    is_public BOOLEAN DEFAULT FALSE,
+    required_permission VARCHAR(100),
+    
+    -- Audit
+    updated_by VARCHAR(50),
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-CREATE INDEX IF NOT EXISTS idx_trading_pairs_pair_id ON trading_pairs(pair_id);
-CREATE INDEX IF NOT EXISTS idx_trading_pairs_symbol ON trading_pairs(symbol);
-CREATE INDEX IF NOT EXISTS idx_trading_pairs_base_token_id ON trading_pairs(base_token_id);
-CREATE INDEX IF NOT EXISTS idx_trading_pairs_quote_token_id ON trading_pairs(quote_token_id);
-CREATE INDEX IF NOT EXISTS idx_trading_pairs_status ON trading_pairs(status);
+-- Deployment Jobs Table
+CREATE TABLE deployment_jobs (
+    id SERIAL PRIMARY KEY,
+    job_id VARCHAR(50) UNIQUE NOT NULL,
+    
+    -- Job Info
+    job_type VARCHAR(50) NOT NULL, -- blockchain, dex, exchange, explorer
+    resource_id VARCHAR(50) NOT NULL,
+    
+    -- Status
+    status VARCHAR(20) DEFAULT 'pending', -- pending, running, completed, failed
+    progress_percentage INTEGER DEFAULT 0,
+    
+    -- Execution Details
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    error_message TEXT,
+    logs TEXT,
+    
+    -- Configuration
+    deployment_config JSONB,
+    
+    -- Created by
+    created_by VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-CREATE INDEX IF NOT EXISTS idx_token_listings_listing_id ON token_listings(listing_id);
-CREATE INDEX IF NOT EXISTS idx_token_listings_status ON token_listings(status);
-CREATE INDEX IF NOT EXISTS idx_token_listings_token_symbol ON token_listings(token_symbol);
+-- Indexes
+CREATE INDEX idx_admin_users_admin_id ON admin_users(admin_id);
+CREATE INDEX idx_admin_users_user_id ON admin_users(user_id);
+CREATE INDEX idx_custom_blockchains_blockchain_id ON custom_blockchains(blockchain_id);
+CREATE INDEX idx_custom_blockchains_chain_id ON custom_blockchains(chain_id);
+CREATE INDEX idx_custom_dexs_dex_id ON custom_dexs(dex_id);
+CREATE INDEX idx_custom_dexs_blockchain_id ON custom_dexs(blockchain_id);
+CREATE INDEX idx_whitelabel_exchanges_exchange_id ON whitelabel_exchanges(exchange_id);
+CREATE INDEX idx_whitelabel_exchanges_client_id ON whitelabel_exchanges(client_id);
+CREATE INDEX idx_block_explorers_explorer_id ON block_explorers(explorer_id);
+CREATE INDEX idx_block_explorers_blockchain_id ON block_explorers(blockchain_id);
+CREATE INDEX idx_wallet_systems_wallet_id ON wallet_systems(wallet_id);
+CREATE INDEX idx_admin_activity_log_admin_id ON admin_activity_log(admin_id);
+CREATE INDEX idx_admin_activity_log_activity_type ON admin_activity_log(activity_type);
+CREATE INDEX idx_admin_activity_log_created_at ON admin_activity_log(created_at);
+CREATE INDEX idx_system_settings_setting_key ON system_settings(setting_key);
+CREATE INDEX idx_deployment_jobs_job_id ON deployment_jobs(job_id);
+CREATE INDEX idx_deployment_jobs_status ON deployment_jobs(status);
+
+-- Update triggers
+CREATE TRIGGER update_admin_users_updated_at BEFORE UPDATE ON admin_users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_custom_blockchains_updated_at BEFORE UPDATE ON custom_blockchains FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_custom_dexs_updated_at BEFORE UPDATE ON custom_dexs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_whitelabel_exchanges_updated_at BEFORE UPDATE ON whitelabel_exchanges FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_block_explorers_updated_at BEFORE UPDATE ON block_explorers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_wallet_systems_updated_at BEFORE UPDATE ON wallet_systems FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_deployment_jobs_updated_at BEFORE UPDATE ON deployment_jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_system_settings_updated_at BEFORE UPDATE ON system_settings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

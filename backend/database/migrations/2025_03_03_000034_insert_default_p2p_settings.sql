@@ -1,132 +1,231 @@
--- Insert default P2P platform settings
+-- Insert Default P2P Trading Settings and Data
+-- TigerEx P2P Platform Configuration
 
-INSERT INTO p2p_settings (setting_key, setting_value, description, updated_by) VALUES
-(
-    'escrow_timeout_hours',
-    '24',
-    'Default timeout for escrow in hours',
-    'system'
-),
-(
-    'dispute_timeout_hours',
-    '72',
-    'Default timeout for dispute resolution in hours',
-    'system'
-),
-(
-    'min_trade_amount',
-    '10',
-    'Minimum trade amount in USD',
-    'system'
-),
-(
-    'max_trade_amount',
-    '100000',
-    'Maximum trade amount in USD',
-    'system'
-),
-(
-    'platform_fee_percentage',
-    '0.5',
-    'Platform fee percentage',
-    'system'
-),
-(
-    'supported_cryptocurrencies',
-    '["BTC", "ETH", "USDT", "USDC", "BNB", "ADA", "DOT", "MATIC", "AVAX", "SOL"]',
-    'List of supported cryptocurrencies for P2P trading',
-    'system'
-),
-(
-    'supported_fiat_currencies',
-    '["USD", "EUR", "GBP", "JPY", "CNY", "INR", "BRL", "RUB", "KRW", "AUD", "CAD", "CHF", "SGD", "HKD", "MXN", "ZAR", "TRY", "AED", "SAR", "EGP"]',
-    'List of supported fiat currencies for P2P trading',
-    'system'
-),
-(
-    'supported_payment_methods',
-    '["bank_transfer", "paypal", "wise", "revolut", "cash_app", "venmo", "zelle", "alipay", "wechat_pay", "upi", "pix", "interac"]',
-    'List of supported payment methods',
-    'system'
-),
-(
-    'kyc_required_for_p2p',
-    'true',
-    'Whether KYC verification is required for P2P trading',
-    'system'
-),
-(
-    'max_active_orders_per_user',
-    '10',
-    'Maximum number of active orders per user',
-    'system'
-),
-(
-    'auto_release_enabled',
-    'false',
-    'Whether automatic crypto release is enabled after payment confirmation',
-    'system'
-),
-(
-    'dispute_escalation_hours',
-    '24',
-    'Hours after which unresolved disputes are escalated',
-    'system'
-),
-(
-    'feedback_required',
-    'true',
-    'Whether feedback is required after trade completion',
-    'system'
-),
-(
-    'supported_countries',
-    '["US", "GB", "DE", "FR", "IT", "ES", "NL", "BE", "AT", "CH", "SE", "NO", "DK", "FI", "IE", "PT", "GR", "PL", "CZ", "HU", "SK", "SI", "EE", "LV", "LT", "LU", "MT", "CY", "BG", "RO", "HR", "CA", "AU", "NZ", "JP", "KR", "SG", "HK", "TW", "MY", "TH", "PH", "ID", "VN", "IN", "BD", "PK", "LK", "NP", "MM", "KH", "LA", "BN", "MV", "BT", "MN", "KZ", "UZ", "KG", "TJ", "TM", "AF", "IR", "IQ", "SA", "AE", "QA", "BH", "KW", "OM", "YE", "JO", "LB", "SY", "IL", "PS", "TR", "GE", "AM", "AZ", "RU", "UA", "BY", "MD", "LT", "LV", "EE", "FI", "SE", "NO", "DK", "IS", "BR", "AR", "CL", "PE", "CO", "VE", "UY", "PY", "BO", "EC", "GY", "SR", "GF", "FK", "MX", "GT", "BZ", "SV", "HN", "NI", "CR", "PA", "CU", "JM", "HT", "DO", "PR", "VI", "AG", "DM", "LC", "VC", "GD", "BB", "TT", "GY", "SR", "GF", "ZA", "NA", "BW", "ZW", "ZM", "MW", "MZ", "SZ", "LS", "MG", "MU", "SC", "KM", "YT", "RE", "SH", "NG", "GH", "CI", "BF", "ML", "NE", "SN", "GM", "GW", "SL", "LR", "TG", "BJ", "CV", "ST", "GQ", "GA", "CG", "CD", "CF", "CM", "TD", "SD", "SS", "ET", "ER", "DJ", "SO", "KE", "UG", "RW", "BI", "TZ", "EG", "LY", "TN", "DZ", "MA", "EH"]',
-    'List of supported countries for P2P trading',
-    'system'
-);
+-- Insert default payment methods
+INSERT INTO p2p_payment_methods (
+    method_id, name, code, category, supported_currencies, 
+    available_countries, min_amount, max_amount, processing_time_minutes,
+    requires_bank_account, requires_phone_verification, requires_id_verification,
+    description, instructions, is_active
+) VALUES 
+-- Bank Transfers
+('PM_BANK_TRANSFER', 'Bank Transfer', 'BANK_TRANSFER', 'bank', 
+ '["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CNY", "INR", "BRL", "KRW"]',
+ '[]', 10, 1000000, 60, true, true, true,
+ 'Direct bank-to-bank transfer', 
+ 'Please provide your bank account details including account number, routing number, and bank name.',
+ true),
 
--- Insert sample payment method configurations
-INSERT INTO p2p_settings (setting_key, setting_value, description, updated_by) VALUES
-(
-    'payment_method_bank_transfer',
-    '{"min_amount": 50, "max_amount": 50000, "processing_time": "1-3 business days", "countries": ["US", "GB", "DE", "FR", "IT", "ES", "CA", "AU"], "currencies": ["USD", "EUR", "GBP", "CAD", "AUD"]}',
-    'Bank transfer payment method configuration',
-    'system'
-),
-(
-    'payment_method_paypal',
-    '{"min_amount": 10, "max_amount": 10000, "processing_time": "instant", "countries": ["US", "GB", "DE", "FR", "IT", "ES", "CA", "AU", "NL", "BE"], "currencies": ["USD", "EUR", "GBP", "CAD", "AUD"]}',
-    'PayPal payment method configuration',
-    'system'
-),
-(
-    'payment_method_wise',
-    '{"min_amount": 20, "max_amount": 25000, "processing_time": "1-2 business days", "countries": ["US", "GB", "DE", "FR", "IT", "ES", "CA", "AU", "SG", "HK"], "currencies": ["USD", "EUR", "GBP", "CAD", "AUD", "SGD", "HKD"]}',
-    'Wise (formerly TransferWise) payment method configuration',
-    'system'
-),
-(
-    'payment_method_revolut',
-    '{"min_amount": 10, "max_amount": 15000, "processing_time": "instant", "countries": ["GB", "DE", "FR", "IT", "ES", "PL", "IE", "LT"], "currencies": ["EUR", "GBP", "USD", "PLN"]}',
-    'Revolut payment method configuration',
-    'system'
-),
-(
-    'payment_method_alipay',
-    '{"min_amount": 100, "max_amount": 50000, "processing_time": "instant", "countries": ["CN", "HK", "SG", "MY"], "currencies": ["CNY", "HKD", "SGD", "MYR"]}',
-    'Alipay payment method configuration',
-    'system'
-),
-(
-    'payment_method_upi',
-    '{"min_amount": 100, "max_amount": 100000, "processing_time": "instant", "countries": ["IN"], "currencies": ["INR"]}',
-    'UPI (Unified Payments Interface) payment method configuration',
-    'system'
-),
-(
-    'payment_method_pix',
-    '{"min_amount": 50, "max_amount": 50000, "processing_time": "instant", "countries": ["BR"], "currencies": ["BRL"]}',
-    'PIX payment method configuration',
-    'system'
-);
+('PM_WIRE_TRANSFER', 'Wire Transfer', 'WIRE_TRANSFER', 'bank',
+ '["USD", "EUR", "GBP", "CAD", "AUD", "JPY"]',
+ '[]', 1000, 10000000, 1440, true, true, true,
+ 'International wire transfer for large amounts',
+ 'Wire transfers are secure but may take 1-3 business days to process.',
+ true),
+
+-- Digital Wallets
+('PM_PAYPAL', 'PayPal', 'PAYPAL', 'digital_wallet',
+ '["USD", "EUR", "GBP", "CAD", "AUD", "JPY"]',
+ '["US", "CA", "GB", "DE", "FR", "IT", "ES", "AU", "JP"]', 1, 10000, 5, false, true, false,
+ 'PayPal digital wallet payments',
+ 'Send payment to the provided PayPal email address.',
+ true),
+
+('PM_ALIPAY', 'Alipay', 'ALIPAY', 'digital_wallet',
+ '["CNY", "USD", "EUR"]',
+ '["CN", "HK", "TW", "SG", "MY"]', 1, 50000, 2, false, true, false,
+ 'Alipay mobile payments',
+ 'Scan QR code or send to Alipay account.',
+ true),
+
+('PM_WECHAT_PAY', 'WeChat Pay', 'WECHAT_PAY', 'digital_wallet',
+ '["CNY", "USD"]',
+ '["CN", "HK", "TW"]', 1, 20000, 2, false, true, false,
+ 'WeChat Pay mobile payments',
+ 'Scan QR code or send to WeChat Pay account.',
+ true),
+
+('PM_ZELLE', 'Zelle', 'ZELLE', 'digital_wallet',
+ '["USD"]',
+ '["US"]', 1, 5000, 5, true, true, false,
+ 'Zelle instant bank transfers',
+ 'Send payment using Zelle to the provided email or phone number.',
+ true),
+
+('PM_VENMO', 'Venmo', 'VENMO', 'digital_wallet',
+ '["USD"]',
+ '["US"]', 1, 3000, 5, false, true, false,
+ 'Venmo peer-to-peer payments',
+ 'Send payment to Venmo username.',
+ true),
+
+-- Cryptocurrency
+('PM_CRYPTO_TRANSFER', 'Crypto Transfer', 'CRYPTO_TRANSFER', 'crypto',
+ '["USD", "EUR", "BTC", "ETH", "USDT", "USDC"]',
+ '[]', 1, 1000000, 30, false, false, false,
+ 'Direct cryptocurrency transfer',
+ 'Send crypto to the provided wallet address.',
+ true),
+
+-- Cash
+('PM_CASH_DEPOSIT', 'Cash Deposit', 'CASH_DEPOSIT', 'cash',
+ '["USD", "EUR", "GBP", "CAD", "AUD", "CNY", "INR", "BRL"]',
+ '[]', 50, 10000, 120, false, true, true,
+ 'Cash deposit at bank or ATM',
+ 'Deposit cash to the provided bank account and upload receipt.',
+ true),
+
+-- Gift Cards
+('PM_AMAZON_GIFT_CARD', 'Amazon Gift Card', 'AMAZON_GIFT_CARD', 'gift_card',
+ '["USD", "EUR", "GBP", "CAD", "AUD", "JPY"]',
+ '["US", "CA", "GB", "DE", "FR", "IT", "ES", "AU", "JP"]', 10, 2000, 5, false, false, false,
+ 'Amazon gift card payments',
+ 'Provide gift card code and receipt.',
+ true),
+
+-- Mobile Money
+('PM_MPESA', 'M-Pesa', 'MPESA', 'mobile_money',
+ '["KES", "TZS", "UGX"]',
+ '["KE", "TZ", "UG"]', 1, 100000, 5, false, true, false,
+ 'M-Pesa mobile money',
+ 'Send payment to M-Pesa number.',
+ true);
+
+-- Insert default P2P settings
+INSERT INTO p2p_settings (setting_key, setting_value, description) VALUES
+('platform_fee_percentage', '0.001', 'Platform fee percentage (0.1%)'),
+('min_order_amount_usd', '10', 'Minimum order amount in USD equivalent'),
+('max_order_amount_usd', '100000', 'Maximum order amount in USD equivalent'),
+('default_payment_time_limit', '15', 'Default payment time limit in minutes'),
+('max_payment_time_limit', '60', 'Maximum payment time limit in minutes'),
+('min_completion_rate_for_ads', '80', 'Minimum completion rate to post ads'),
+('max_active_ads_per_user', '10', 'Maximum active ads per user'),
+('appeal_processing_time_hours', '24', 'Target appeal processing time in hours'),
+('auto_release_time_hours', '1', 'Auto-release time after payment confirmation'),
+('feedback_required', 'true', 'Whether feedback is required after order completion'),
+
+('supported_assets', '["BTC", "ETH", "USDT", "USDC", "BNB", "ADA", "SOL", "MATIC", "AVAX", "DOT"]', 'Supported crypto assets for P2P trading'),
+('supported_fiat_currencies', '["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CNY", "INR", "BRL", "KRW", "RUB", "TRY", "MXN", "ARS", "CLP", "COP", "PEN", "VES", "NGN", "GHS", "KES", "ZAR"]', 'Supported fiat currencies'),
+
+('kyc_requirements', '{
+  "basic": {"min_order_amount": 0, "max_order_amount": 1000, "daily_limit": 5000},
+  "intermediate": {"min_order_amount": 0, "max_order_amount": 10000, "daily_limit": 50000},
+  "advanced": {"min_order_amount": 0, "max_order_amount": 100000, "daily_limit": 500000}
+}', 'KYC level requirements and limits'),
+
+('trading_hours', '{
+  "enabled": false,
+  "timezone": "UTC",
+  "start_time": "00:00",
+  "end_time": "23:59",
+  "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+}', 'P2P trading hours configuration'),
+
+('dispute_resolution_process', '{
+  "auto_escalation_hours": 2,
+  "evidence_submission_hours": 24,
+  "admin_response_hours": 12,
+  "max_resolution_days": 7
+}', 'Dispute resolution process configuration'),
+
+('user_verification_requirements', '{
+  "phone_verification": true,
+  "email_verification": true,
+  "id_verification_for_high_volume": true,
+  "bank_account_verification": false
+}', 'User verification requirements'),
+
+('advertisement_rules', '{
+  "min_margin_percentage": -5,
+  "max_margin_percentage": 50,
+  "max_terms_length": 500,
+  "require_payment_method_verification": true,
+  "auto_pause_on_low_balance": true
+}', 'Advertisement posting rules'),
+
+('chat_features', '{
+  "file_upload_enabled": true,
+  "max_file_size_mb": 10,
+  "allowed_file_types": ["jpg", "jpeg", "png", "pdf", "txt"],
+  "message_encryption": true,
+  "auto_translate": false
+}', 'Chat system features configuration'),
+
+('security_features', '{
+  "ip_whitelist_enabled": false,
+  "device_fingerprinting": true,
+  "suspicious_activity_detection": true,
+  "auto_freeze_on_disputes": true,
+  "two_factor_for_large_orders": true
+}', 'Security features configuration'),
+
+('notification_settings', '{
+  "email_notifications": true,
+  "sms_notifications": false,
+  "push_notifications": true,
+  "telegram_bot_enabled": false
+}', 'Notification system settings');
+
+-- Insert sample countries and regions
+INSERT INTO p2p_settings (setting_key, setting_value, description) VALUES
+('supported_countries', '{
+  "high_volume": ["US", "CA", "GB", "DE", "FR", "IT", "ES", "AU", "JP", "KR", "SG", "HK"],
+  "medium_volume": ["BR", "MX", "AR", "CL", "CO", "PE", "IN", "TH", "MY", "PH", "ID", "VN"],
+  "emerging": ["NG", "GH", "KE", "ZA", "EG", "MA", "TN", "TR", "RU", "UA", "PL", "CZ"],
+  "restricted": ["CN", "IR", "KP", "SY", "AF"],
+  "banned": []
+}', 'Country classification for P2P trading'),
+
+('regional_settings', '{
+  "Americas": {
+    "primary_currencies": ["USD", "CAD", "BRL", "MXN", "ARS"],
+    "popular_payment_methods": ["BANK_TRANSFER", "PAYPAL", "ZELLE", "VENMO"],
+    "trading_hours": "24/7"
+  },
+  "Europe": {
+    "primary_currencies": ["EUR", "GBP", "CHF", "SEK", "NOK"],
+    "popular_payment_methods": ["BANK_TRANSFER", "PAYPAL", "SEPA"],
+    "trading_hours": "24/7"
+  },
+  "Asia": {
+    "primary_currencies": ["CNY", "JPY", "KRW", "INR", "SGD"],
+    "popular_payment_methods": ["BANK_TRANSFER", "ALIPAY", "WECHAT_PAY", "UPI"],
+    "trading_hours": "24/7"
+  },
+  "Africa": {
+    "primary_currencies": ["NGN", "GHS", "KES", "ZAR", "EGP"],
+    "popular_payment_methods": ["BANK_TRANSFER", "MPESA", "MOBILE_MONEY"],
+    "trading_hours": "24/7"
+  }
+}', 'Regional P2P trading settings');
+
+-- Insert risk management settings
+INSERT INTO p2p_settings (setting_key, setting_value, description) VALUES
+('risk_management', '{
+  "max_orders_per_day": 50,
+  "max_volume_per_day_usd": 100000,
+  "velocity_checks": true,
+  "blacklist_checking": true,
+  "aml_screening": true,
+  "suspicious_pattern_detection": true,
+  "auto_freeze_threshold": 10000
+}', 'Risk management configuration'),
+
+('fraud_detection', '{
+  "duplicate_payment_detection": true,
+  "velocity_analysis": true,
+  "device_fingerprinting": true,
+  "behavioral_analysis": true,
+  "machine_learning_scoring": true,
+  "manual_review_threshold": 5000
+}', 'Fraud detection system settings'),
+
+('compliance_settings', '{
+  "transaction_reporting": true,
+  "suspicious_activity_reporting": true,
+  "record_retention_days": 2555,
+  "audit_trail_enabled": true,
+  "regulatory_reporting": true
+}', 'Compliance and regulatory settings');
+
+COMMIT;
