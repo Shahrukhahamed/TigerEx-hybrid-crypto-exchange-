@@ -283,6 +283,60 @@ services:
     volumes:
       - ai_models:/app/models
 
+  # Trading Services
+  spot-trading:
+    build:
+      context: ../backend/spot-trading
+      dockerfile: Dockerfile
+    container_name: tigerex-spot-trading
+    ports:
+      - "8091:8091"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+      - KAFKA_BROKERS=kafka:9092
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - tigerex-network
+    restart: unless-stopped
+
+  etf-trading:
+    build:
+      context: ../backend/etf-trading
+      dockerfile: Dockerfile
+    container_name: tigerex-etf-trading
+    ports:
+      - "8092:8092"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - tigerex-network
+    restart: unless-stopped
+
+  trading-pair-management:
+    build:
+      context: ../backend/trading-pair-management
+      dockerfile: Dockerfile
+    container_name: tigerex-trading-pairs
+    ports:
+      - "8093:8093"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - tigerex-network
+    restart: unless-stopped
+
   # Frontend Services
   frontend:
     build:
@@ -294,8 +348,14 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_WS_URL=ws://localhost:8080
+      - NEXT_PUBLIC_SPOT_API_URL=http://localhost:8091
+      - NEXT_PUBLIC_ETF_API_URL=http://localhost:8092
+      - NEXT_PUBLIC_TRADING_PAIRS_API_URL=http://localhost:8093
     depends_on:
       - api-gateway
+      - spot-trading
+      - etf-trading
+      - trading-pair-management
     networks:
       - tigerex-network
     restart: unless-stopped
