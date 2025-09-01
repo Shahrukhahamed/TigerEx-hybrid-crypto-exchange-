@@ -8,12 +8,12 @@ services:
     environment:
       POSTGRES_DB: tigerex
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tigerex_password}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ../backend/database/migrations:/docker-entrypoint-initdb.d
+      - ./init-scripts:/docker-entrypoint-initdb.d
     networks:
       - tigerex-network
     restart: unless-stopped
@@ -28,33 +28,11 @@ services:
     networks:
       - tigerex-network
     restart: unless-stopped
-    command: redis-server --appendonly yes
-
-  scylladb:
-    image: scylladb/scylla:5.2
-    container_name: tigerex-scylla
-    ports:
-      - "9042:9042"
-    volumes:
-      - scylla_data:/var/lib/scylla
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-    command: --seeds=scylladb --smp 1 --memory 750M --overprovisioned 1 --api-address 0.0.0.0
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-tigerex_redis}
 
   # Message Broker
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
-    container_name: tigerex-zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
   kafka:
-    image: confluentinc/cp-kafka:7.4.0
+    image: confluentinc/cp-kafka:latest
     container_name: tigerex-kafka
     depends_on:
       - zookeeper
@@ -63,82 +41,85 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    volumes:
+      - kafka_data:/var/lib/kafka/data
     networks:
       - tigerex-network
     restart: unless-stopped
 
-  # Core Backend Services
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: tigerex-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    networks:
+      - tigerex-network
+    restart: unless-stopped
+
+  # Backend Services
+  api-gateway:
+    build:
+      context: ../backend/api-gateway
+      dockerfile: Dockerfile
+    container_name: tigerex-api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+      - KAFKA_BROKERS=kafka:9092
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key}
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - tigerex-network
+    restart: unless-stopped
+
   matching-engine:
     build:
       context: ../backend/matching-engine
       dockerfile: Dockerfile
     container_name: tigerex-matching-engine
+    ports:
+      - "8081:8081"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+      - KAFKA_BROKERS=kafka:9092
     depends_on:
       - postgres
       - redis
       - kafka
-    ports:
-      - "8080:8080"
-    environment:
-      DATABASE_URL: postgresql://postgres:password@postgres:5432/tigerex
-      REDIS_URL: redis://redis:6379
-      KAFKA_BROKERS: kafka:29092
     networks:
       - tigerex-network
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 2G
 
   transaction-engine:
     build:
       context: ../backend/transaction-engine
       dockerfile: Dockerfile
     container_name: tigerex-transaction-engine
+    ports:
+      - "8082:8082"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+      - KAFKA_BROKERS=kafka:9092
     depends_on:
       - postgres
       - redis
       - kafka
-    ports:
-      - "8081:8081"
-    environment:
-      DATABASE_URL: postgresql://postgres:password@postgres:5432/tigerex
-      REDIS_URL: redis://redis:6379
-      KAFKA_BROKERS: kafka:29092
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  api-gateway:
-    build:
-      context: ../backend/api-gateway
-      dockerfile: Dockerfile
-    container_name: tigerex-api-gateway
-    depends_on:
-      - postgres
-      - redis
-      - matching-engine
-      - transaction-engine
-    ports:
-      - "8000:8080"
-    environment:
-      PORT: 8080
-      DATABASE_URL: postgres://postgres:password@postgres:5432/tigerex?sslmode=disable
-      REDIS_URL: redis://redis:6379
-      JWT_SECRET: your-super-secret-jwt-key-change-in-production
-      ENVIRONMENT: development
-      RATE_LIMIT_RPS: 100
-      RATE_LIMIT_BURST: 200
-      MATCHING_ENGINE_URL: http://matching-engine:8080
-      TRANSACTION_ENGINE_URL: http://transaction-engine:8081
     networks:
       - tigerex-network
     restart: unless-stopped
@@ -148,16 +129,16 @@ services:
       context: ../backend/risk-management
       dockerfile: Dockerfile
     container_name: tigerex-risk-management
+    ports:
+      - "8083:8083"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+      - KAFKA_BROKERS=kafka:9092
     depends_on:
       - postgres
       - redis
       - kafka
-    ports:
-      - "8082:8082"
-    environment:
-      DATABASE_URL: postgresql://postgres:password@postgres:5432/tigerex
-      REDIS_URL: redis://redis:6379
-      KAFKA_BROKERS: kafka:29092
     networks:
       - tigerex-network
     restart: unless-stopped
@@ -167,135 +148,98 @@ services:
       context: ../backend/auth-service
       dockerfile: Dockerfile
     container_name: tigerex-auth-service
-    depends_on:
-      - postgres
-      - redis
-    ports:
-      - "8083:8083"
-    environment:
-      DATABASE_URL: postgresql://postgres:password@postgres:5432/tigerex
-      REDIS_URL: redis://redis:6379
-      JWT_SECRET: your-super-secret-jwt-key-change-in-production
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  # Trading Services
-  spot-trading:
-    build:
-      context: ../backend/trading/spot-trading
-      dockerfile: Dockerfile
-    container_name: tigerex-spot-trading
-    depends_on:
-      - matching-engine
-      - transaction-engine
     ports:
       - "8084:8084"
     environment:
-      MATCHING_ENGINE_URL: http://matching-engine:8080
-      TRANSACTION_ENGINE_URL: http://transaction-engine:8081
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - APPLE_CLIENT_ID=${APPLE_CLIENT_ID}
+      - APPLE_CLIENT_SECRET=${APPLE_CLIENT_SECRET}
+    depends_on:
+      - postgres
+      - redis
     networks:
       - tigerex-network
     restart: unless-stopped
 
-  futures-trading-usd:
+  notification-service:
     build:
-      context: ../backend/trading/futures-trading/usd-m
+      context: ../backend/notification-service
       dockerfile: Dockerfile
-    container_name: tigerex-futures-usd
-    depends_on:
-      - matching-engine
-      - transaction-engine
-      - risk-management
+    container_name: tigerex-notification-service
     ports:
       - "8085:8085"
     environment:
-      MATCHING_ENGINE_URL: http://matching-engine:8080
-      TRANSACTION_ENGINE_URL: http://transaction-engine:8081
-      RISK_MANAGEMENT_URL: http://risk-management:8082
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+      - KAFKA_BROKERS=kafka:9092
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+      - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY}
+    depends_on:
+      - postgres
+      - redis
+      - kafka
     networks:
       - tigerex-network
     restart: unless-stopped
 
-  futures-trading-coin:
+  super-admin-system:
     build:
-      context: ../backend/trading/futures-trading/coin-m
+      context: ../backend/super-admin-system
       dockerfile: Dockerfile
-    container_name: tigerex-futures-coin
-    depends_on:
-      - matching-engine
-      - transaction-engine
-      - risk-management
+    container_name: tigerex-super-admin
     ports:
       - "8086:8086"
     environment:
-      MATCHING_ENGINE_URL: http://matching-engine:8080
-      TRANSACTION_ENGINE_URL: http://transaction-engine:8081
-      RISK_MANAGEMENT_URL: http://risk-management:8082
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+      - KUBERNETES_CONFIG_PATH=/app/kubeconfig
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./kubeconfig:/app/kubeconfig:ro
     networks:
       - tigerex-network
     restart: unless-stopped
 
-  # Token Listing Service (Python)
-  token-listing-service:
+  role-based-admin:
     build:
-      context: ../backend/token-listing-service
+      context: ../backend/role-based-admin
       dockerfile: Dockerfile
-    container_name: tigerex-token-listing
+    container_name: tigerex-role-admin
     ports:
       - "8087:8087"
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/tigerex
-      - REDIS_URL=redis://redis:6379
-      - KAFKA_BROKERS=kafka:9092
-      - ETHEREUM_RPC=${ETHEREUM_RPC}
-      - BSC_RPC=${BSC_RPC}
-      - POLYGON_RPC=${POLYGON_RPC}
-      - ARBITRUM_RPC=${ARBITRUM_RPC}
-      - OPTIMISM_RPC=${OPTIMISM_RPC}
-      - AVALANCHE_RPC=${AVALANCHE_RPC}
-      - BINANCE_API_KEY=${BINANCE_API_KEY}
-      - BINANCE_SECRET=${BINANCE_SECRET}
-      - BYBIT_API_KEY=${BYBIT_API_KEY}
-      - BYBIT_SECRET=${BYBIT_SECRET}
-      - OKX_API_KEY=${OKX_API_KEY}
-      - OKX_SECRET=${OKX_SECRET}
-      - OKX_PASSPHRASE=${OKX_PASSPHRASE}
-      - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
-      - AWS_SECRET_KEY=${AWS_SECRET_KEY}
-      - IPFS_NODE=${IPFS_NODE}
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
     depends_on:
       - postgres
       - redis
-      - kafka
     networks:
       - tigerex-network
     restart: unless-stopped
 
-  # Liquidity Aggregator (Rust)
-  liquidity-aggregator:
+  wallet-management:
     build:
-      context: ../backend/liquidity-aggregator
+      context: ../backend/wallet-management
       dockerfile: Dockerfile
-    container_name: tigerex-liquidity-aggregator
+    container_name: tigerex-wallet-management
     ports:
       - "8088:8088"
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/tigerex
-      - REDIS_URL=redis://redis:6379
-      - BINANCE_API_KEY=${BINANCE_API_KEY}
-      - BINANCE_SECRET=${BINANCE_SECRET}
-      - BYBIT_API_KEY=${BYBIT_API_KEY}
-      - BYBIT_SECRET=${BYBIT_SECRET}
-      - OKX_API_KEY=${OKX_API_KEY}
-      - OKX_SECRET=${OKX_SECRET}
-      - OKX_PASSPHRASE=${OKX_PASSPHRASE}
-      - ETHEREUM_RPC=${ETHEREUM_RPC}
-      - BSC_RPC=${BSC_RPC}
-      - POLYGON_RPC=${POLYGON_RPC}
-      - ARBITRUM_RPC=${ARBITRUM_RPC}
-      - OPTIMISM_RPC=${OPTIMISM_RPC}
-      - AVALANCHE_RPC=${AVALANCHE_RPC}
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
+      - ENCRYPTION_KEY=${WALLET_ENCRYPTION_KEY:-your-wallet-encryption-key}
     depends_on:
       - postgres
       - redis
@@ -303,26 +247,16 @@ services:
       - tigerex-network
     restart: unless-stopped
 
-  # Web3 Integration Service (Go)
-  web3-integration:
+  affiliate-system:
     build:
-      context: ../backend/web3-integration
+      context: ../backend/affiliate-system
       dockerfile: Dockerfile
-    container_name: tigerex-web3-integration
+    container_name: tigerex-affiliate-system
     ports:
       - "8089:8089"
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/tigerex
-      - REDIS_URL=redis://redis:6379
-      - ETHEREUM_RPC=${ETHEREUM_RPC}
-      - BSC_RPC=${BSC_RPC}
-      - POLYGON_RPC=${POLYGON_RPC}
-      - ARBITRUM_RPC=${ARBITRUM_RPC}
-      - OPTIMISM_RPC=${OPTIMISM_RPC}
-      - AVALANCHE_RPC=${AVALANCHE_RPC}
-      - SOLANA_RPC=${SOLANA_RPC}
-      - PRIVATE_KEY=${WEB3_PRIVATE_KEY}
-      - PORT=8089
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
     depends_on:
       - postgres
       - redis
@@ -330,118 +264,24 @@ services:
       - tigerex-network
     restart: unless-stopped
 
-  # Payment Gateway (Python)
-  payment-gateway:
+  ai-maintenance-system:
     build:
-      context: ../backend/payment-gateway
+      context: ../backend/ai-maintenance-system
       dockerfile: Dockerfile
-    container_name: tigerex-payment-gateway
+    container_name: tigerex-ai-maintenance
     ports:
       - "8090:8090"
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/tigerex
-      - REDIS_URL=redis://redis:6379
-      - KAFKA_BROKERS=kafka:9092
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
-      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
-      - PAYPAL_CLIENT_ID=${PAYPAL_CLIENT_ID}
-      - PAYPAL_CLIENT_SECRET=${PAYPAL_CLIENT_SECRET}
-      - ADYEN_API_KEY=${ADYEN_API_KEY}
-      - ADYEN_MERCHANT_ACCOUNT=${ADYEN_MERCHANT_ACCOUNT}
-      - SQUARE_ACCESS_TOKEN=${SQUARE_ACCESS_TOKEN}
-      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
-      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
-      - COINBASE_API_KEY=${COINBASE_API_KEY}
-      - ALIPAY_APP_ID=${ALIPAY_APP_ID}
-      - WECHAT_APP_ID=${WECHAT_APP_ID}
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-tigerex_password}@postgres:5432/tigerex
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-tigerex_redis}@redis:6379
     depends_on:
       - postgres
       - redis
-      - kafka
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  # Advanced Trading Engine (C++)
-  advanced-trading-engine:
-    build:
-      context: ../backend/advanced-trading-engine
-      dockerfile: Dockerfile
-    container_name: tigerex-advanced-trading-engine
-    ports:
-      - "8091:8091"
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/tigerex
-      - REDIS_URL=redis://redis:6379
-      - KAFKA_BROKERS=kafka:9092
-    depends_on:
-      - postgres
-      - redis
-      - kafka
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  # Lending & Borrowing Service (Java)
-  lending-borrowing:
-    build:
-      context: ../backend/lending-borrowing
-      dockerfile: Dockerfile
-    container_name: tigerex-lending-borrowing
-    ports:
-      - "8092:8092"
-    environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/tigerex
-      - SPRING_DATASOURCE_USERNAME=postgres
-      - SPRING_DATASOURCE_PASSWORD=password
-      - SPRING_REDIS_HOST=redis
-      - SPRING_REDIS_PORT=6379
-      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - SPRING_PROFILES_ACTIVE=production
-    depends_on:
-      - postgres
-      - redis
-      - kafka
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  # Admin Panel (Python)
-  admin-panel:
-    build:
-      context: ../backend/admin-panel
-      dockerfile: Dockerfile
-    container_name: tigerex-admin-panel
-    ports:
-      - "8093:8093"
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/tigerex
-      - REDIS_URL=redis://redis:6379
-      - KAFKA_BROKERS=kafka:9092
-      - ADMIN_SECRET_KEY=${ADMIN_SECRET_KEY}
-      - ADMIN_SESSION_TIMEOUT=3600
-      - SMTP_HOST=${SMTP_HOST}
-      - SMTP_PORT=${SMTP_PORT}
-      - SMTP_USERNAME=${SMTP_USERNAME}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
-      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
-      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
-      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_BUCKET_NAME=${AWS_BUCKET_NAME}
-    depends_on:
-      - postgres
-      - redis
-      - kafka
     networks:
       - tigerex-network
     restart: unless-stopped
     volumes:
-      - admin_uploads:/app/uploads
-      - admin_reports:/app/reports
-      - admin_logs:/app/logs
+      - ai_models:/app/models
 
   # Frontend Services
   frontend:
@@ -449,20 +289,20 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
     container_name: tigerex-frontend
-    depends_on:
-      - api-gateway
     ports:
       - "3000:3000"
     environment:
-      REACT_APP_API_URL: http://localhost:8000
-      REACT_APP_WS_URL: ws://localhost:8080
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8080
+    depends_on:
+      - api-gateway
     networks:
       - tigerex-network
     restart: unless-stopped
 
-  # Monitoring and Observability
+  # Monitoring Services
   prometheus:
-    image: prom/prometheus:v2.45.0
+    image: prom/prometheus:latest
     container_name: tigerex-prometheus
     ports:
       - "9090:9090"
@@ -481,16 +321,17 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:10.0.0
+    image: grafana/grafana:latest
     container_name: tigerex-grafana
-    depends_on:
-      - prometheus
     ports:
       - "3001:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
     networks:
       - tigerex-network
     restart: unless-stopped
@@ -499,171 +340,28 @@ services:
   nginx:
     image: nginx:alpine
     container_name: tigerex-nginx
-    depends_on:
-      - api-gateway
-      - frontend
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
       - ./nginx/ssl:/etc/nginx/ssl
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  # Security Services
-  vault:
-    image: vault:1.14.0
-    container_name: tigerex-vault
-    ports:
-      - "8200:8200"
-    environment:
-      VAULT_DEV_ROOT_TOKEN_ID: myroot
-      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
-    cap_add:
-      - IPC_LOCK
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  # Blockchain Integration
-  bitcoin-node:
-    image: ruimarinho/bitcoin-core:22
-    container_name: tigerex-bitcoin
-    ports:
-      - "8332:8332"
-      - "8333:8333"
-    volumes:
-      - bitcoin_data:/home/bitcoin/.bitcoin
-    command: |
-      bitcoind
-      -printtoconsole
-      -regtest=1
-      -rpcallowip=0.0.0.0/0
-      -rpcuser=bitcoin
-      -rpcpassword=password
-      -rpcbind=0.0.0.0
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  ethereum-node:
-    image: ethereum/client-go:v1.12.0
-    container_name: tigerex-ethereum
-    ports:
-      - "8545:8545"
-      - "8546:8546"
-      - "30303:30303"
-    volumes:
-      - ethereum_data:/root/.ethereum
-    command: |
-      --dev
-      --http
-      --http.addr=0.0.0.0
-      --http.port=8545
-      --http.api=eth,net,web3,personal,miner
-      --ws
-      --ws.addr=0.0.0.0
-      --ws.port=8546
-      --ws.api=eth,net,web3,personal,miner
-      --allow-insecure-unlock
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  # Additional Services
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
-    container_name: tigerex-elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ports:
-      - "9200:9200"
-    volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.8.0
-    container_name: tigerex-kibana
     depends_on:
-      - elasticsearch
-    ports:
-      - "5601:5601"
-    environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      - frontend
+      - api-gateway
     networks:
       - tigerex-network
     restart: unless-stopped
-
-  # Message Queue UI
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: tigerex-kafka-ui
-    depends_on:
-      - kafka
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  # Database Admin
-  pgadmin:
-    image: dpage/pgadmin4:7
-    container_name: tigerex-pgadmin
-    depends_on:
-      - postgres
-    ports:
-      - "5050:80"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@tigerex.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-  # Redis Admin
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: tigerex-redis-commander
-    depends_on:
-      - redis
-    ports:
-      - "8081:8081"
-    environment:
-      REDIS_HOSTS: local:redis:6379
-    networks:
-      - tigerex-network
-    restart: unless-stopped
-
-networks:
-  tigerex-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
 
 volumes:
   postgres_data:
   redis_data:
-  scylla_data:
+  kafka_data:
+  zookeeper_data:
   prometheus_data:
   grafana_data:
-  bitcoin_data:
-  ethereum_data:
-  elasticsearch_data:
-  pgadmin_data:
-  admin_uploads:
-  admin_reports:
-  admin_logs:
+  ai_models:
+
+networks:
+  tigerex-network:
+    driver: bridge

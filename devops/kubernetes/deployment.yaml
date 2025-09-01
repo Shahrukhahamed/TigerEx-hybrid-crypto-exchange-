@@ -2,23 +2,19 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: tigerex
-  labels:
-    name: tigerex
-
 ---
-# ConfigMap for application configuration
+# ConfigMap for environment variables
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: tigerex-config
   namespace: tigerex
 data:
-  DATABASE_URL: "postgresql://postgres:password@postgres-service:5432/tigerex"
-  REDIS_URL: "redis://redis-service:6379"
-  KAFKA_BROKERS: "kafka-service:9092"
-  JWT_SECRET: "your-super-secret-jwt-key-change-in-production"
-  ENVIRONMENT: "production"
-
+  POSTGRES_DB: "tigerex"
+  POSTGRES_USER: "postgres"
+  REDIS_PORT: "6379"
+  KAFKA_BROKERS: "kafka:9092"
+  API_GATEWAY_PORT: "8080"
 ---
 # Secret for sensitive data
 apiVersion: v1
@@ -28,9 +24,9 @@ metadata:
   namespace: tigerex
 type: Opaque
 data:
-  postgres-password: cGFzc3dvcmQ= # base64 encoded 'password'
-  jwt-secret: eW91ci1zdXBlci1zZWNyZXQtand0LWtleS1jaGFuZ2UtaW4tcHJvZHVjdGlvbg== # base64 encoded
-
+  POSTGRES_PASSWORD: dGlnZXJleF9wYXNzd29yZA== # base64 encoded
+  REDIS_PASSWORD: dGlnZXJleF9yZWRpcw== # base64 encoded
+  JWT_SECRET: eW91ci1zdXBlci1zZWNyZXQtand0LWtleQ== # base64 encoded
 ---
 # PostgreSQL Deployment
 apiVersion: apps/v1
@@ -55,35 +51,40 @@ spec:
         - containerPort: 5432
         env:
         - name: POSTGRES_DB
-          value: tigerex
+          valueFrom:
+            configMapKeyRef:
+              name: tigerex-config
+              key: POSTGRES_DB
         - name: POSTGRES_USER
-          value: postgres
+          valueFrom:
+            configMapKeyRef:
+              name: tigerex-config
+              key: POSTGRES_USER
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: tigerex-secrets
-              key: postgres-password
+              key: POSTGRES_PASSWORD
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
         resources:
           requests:
-            memory: "256Mi"
+            memory: "512Mi"
             cpu: "250m"
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "2Gi"
+            cpu: "1000m"
       volumes:
       - name: postgres-storage
         persistentVolumeClaim:
           claimName: postgres-pvc
-
 ---
 # PostgreSQL Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres-service
+  name: postgres
   namespace: tigerex
 spec:
   selector:
@@ -92,7 +93,6 @@ spec:
   - port: 5432
     targetPort: 5432
   type: ClusterIP
-
 ---
 # PostgreSQL PVC
 apiVersion: v1
@@ -105,8 +105,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 10Gi
-
+      storage: 20Gi
 ---
 # Redis Deployment
 apiVersion: apps/v1
@@ -129,28 +128,34 @@ spec:
         image: redis:7-alpine
         ports:
         - containerPort: 6379
-        command: ["redis-server", "--appendonly", "yes"]
+        command: ["redis-server"]
+        args: ["--appendonly", "yes", "--requirepass", "$(REDIS_PASSWORD)"]
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: tigerex-secrets
+              key: REDIS_PASSWORD
         volumeMounts:
         - name: redis-storage
           mountPath: /data
         resources:
           requests:
-            memory: "128Mi"
+            memory: "256Mi"
             cpu: "100m"
           limits:
-            memory: "256Mi"
-            cpu: "200m"
+            memory: "1Gi"
+            cpu: "500m"
       volumes:
       - name: redis-storage
         persistentVolumeClaim:
           claimName: redis-pvc
-
 ---
 # Redis Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis-service
+  name: redis
   namespace: tigerex
 spec:
   selector:
@@ -159,7 +164,6 @@ spec:
   - port: 6379
     targetPort: 6379
   type: ClusterIP
-
 ---
 # Redis PVC
 apiVersion: v1
@@ -173,229 +177,6 @@ spec:
   resources:
     requests:
       storage: 5Gi
-
----
-# Kafka Deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kafka
-  namespace: tigerex
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: kafka
-  template:
-    metadata:
-      labels:
-        app: kafka
-    spec:
-      containers:
-      - name: kafka
-        image: confluentinc/cp-kafka:7.4.0
-        ports:
-        - containerPort: 9092
-        env:
-        - name: KAFKA_BROKER_ID
-          value: "1"
-        - name: KAFKA_ZOOKEEPER_CONNECT
-          value: "zookeeper-service:2181"
-        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
-          value: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
-        - name: KAFKA_ADVERTISED_LISTENERS
-          value: "PLAINTEXT://kafka-service:9092"
-        - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
-          value: "1"
-        - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
-          value: "true"
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
-
----
-# Kafka Service
-apiVersion: v1
-kind: Service
-metadata:
-  name: kafka-service
-  namespace: tigerex
-spec:
-  selector:
-    app: kafka
-  ports:
-  - port: 9092
-    targetPort: 9092
-  type: ClusterIP
-
----
-# Zookeeper Deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: zookeeper
-  namespace: tigerex
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: zookeeper
-  template:
-    metadata:
-      labels:
-        app: zookeeper
-    spec:
-      containers:
-      - name: zookeeper
-        image: confluentinc/cp-zookeeper:7.4.0
-        ports:
-        - containerPort: 2181
-        env:
-        - name: ZOOKEEPER_CLIENT_PORT
-          value: "2181"
-        - name: ZOOKEEPER_TICK_TIME
-          value: "2000"
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
-
----
-# Zookeeper Service
-apiVersion: v1
-kind: Service
-metadata:
-  name: zookeeper-service
-  namespace: tigerex
-spec:
-  selector:
-    app: zookeeper
-  ports:
-  - port: 2181
-    targetPort: 2181
-  type: ClusterIP
-
----
-# Matching Engine Deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: matching-engine
-  namespace: tigerex
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: matching-engine
-  template:
-    metadata:
-      labels:
-        app: matching-engine
-    spec:
-      containers:
-      - name: matching-engine
-        image: tigerex/matching-engine:latest
-        ports:
-        - containerPort: 8080
-        envFrom:
-        - configMapRef:
-            name: tigerex-config
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "2Gi"
-            cpu: "2000m"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 5
-
----
-# Matching Engine Service
-apiVersion: v1
-kind: Service
-metadata:
-  name: matching-engine-service
-  namespace: tigerex
-spec:
-  selector:
-    app: matching-engine
-  ports:
-  - port: 8080
-    targetPort: 8080
-  type: ClusterIP
-
----
-# Transaction Engine Deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: transaction-engine
-  namespace: tigerex
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: transaction-engine
-  template:
-    metadata:
-      labels:
-        app: transaction-engine
-    spec:
-      containers:
-      - name: transaction-engine
-        image: tigerex/transaction-engine:latest
-        ports:
-        - containerPort: 8081
-        envFrom:
-        - configMapRef:
-            name: tigerex-config
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8081
-          initialDelaySeconds: 30
-          periodSeconds: 10
-
----
-# Transaction Engine Service
-apiVersion: v1
-kind: Service
-metadata:
-  name: transaction-engine-service
-  namespace: tigerex
-spec:
-  selector:
-    app: transaction-engine
-  ports:
-  - port: 8081
-    targetPort: 8081
-  type: ClusterIP
-
 ---
 # API Gateway Deployment
 apiVersion: apps/v1
@@ -418,35 +199,51 @@ spec:
         image: tigerex/api-gateway:latest
         ports:
         - containerPort: 8080
-        envFrom:
-        - configMapRef:
-            name: tigerex-config
         env:
+        - name: DATABASE_URL
+          value: "postgresql://postgres:$(POSTGRES_PASSWORD)@postgres:5432/tigerex"
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis:6379"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: tigerex-secrets
+              key: POSTGRES_PASSWORD
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: tigerex-secrets
+              key: REDIS_PASSWORD
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
               name: tigerex-secrets
-              key: jwt-secret
+              key: JWT_SECRET
         resources:
           requests:
             memory: "256Mi"
-            cpu: "250m"
+            cpu: "200m"
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "1Gi"
+            cpu: "1000m"
         livenessProbe:
           httpGet:
             path: /health
             port: 8080
           initialDelaySeconds: 30
           periodSeconds: 10
-
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
 ---
 # API Gateway Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: api-gateway-service
+  name: api-gateway
   namespace: tigerex
 spec:
   selector:
@@ -455,61 +252,70 @@ spec:
   - port: 8080
     targetPort: 8080
   type: LoadBalancer
-
 ---
-# Risk Management Deployment
+# Matching Engine Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: risk-management
+  name: matching-engine
   namespace: tigerex
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: risk-management
+      app: matching-engine
   template:
     metadata:
       labels:
-        app: risk-management
+        app: matching-engine
     spec:
       containers:
-      - name: risk-management
-        image: tigerex/risk-management:latest
+      - name: matching-engine
+        image: tigerex/matching-engine:latest
         ports:
-        - containerPort: 8082
-        envFrom:
-        - configMapRef:
-            name: tigerex-config
+        - containerPort: 8081
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://postgres:$(POSTGRES_PASSWORD)@postgres:5432/tigerex"
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis:6379"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: tigerex-secrets
+              key: POSTGRES_PASSWORD
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: tigerex-secrets
+              key: REDIS_PASSWORD
         resources:
           requests:
             memory: "512Mi"
             cpu: "500m"
           limits:
-            memory: "1Gi"
-            cpu: "1000m"
+            memory: "2Gi"
+            cpu: "2000m"
         livenessProbe:
           httpGet:
             path: /health
-            port: 8082
+            port: 8081
           initialDelaySeconds: 30
           periodSeconds: 10
-
 ---
-# Risk Management Service
+# Matching Engine Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: risk-management-service
+  name: matching-engine
   namespace: tigerex
 spec:
   selector:
-    app: risk-management
+    app: matching-engine
   ports:
-  - port: 8082
-    targetPort: 8082
+  - port: 8081
+    targetPort: 8081
   type: ClusterIP
-
 ---
 # Frontend Deployment
 apiVersion: apps/v1
@@ -533,22 +339,29 @@ spec:
         ports:
         - containerPort: 3000
         env:
-        - name: REACT_APP_API_URL
-          value: "http://api-gateway-service:8080"
+        - name: NEXT_PUBLIC_API_URL
+          value: "http://api-gateway:8080"
+        - name: NEXT_PUBLIC_WS_URL
+          value: "ws://api-gateway:8080"
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
             memory: "256Mi"
             cpu: "200m"
-
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
 ---
 # Frontend Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: frontend-service
+  name: frontend
   namespace: tigerex
 spec:
   selector:
@@ -557,7 +370,6 @@ spec:
   - port: 3000
     targetPort: 3000
   type: LoadBalancer
-
 ---
 # Horizontal Pod Autoscaler for API Gateway
 apiVersion: autoscaling/v2
@@ -585,7 +397,6 @@ spec:
       target:
         type: Utilization
         averageUtilization: 80
-
 ---
 # Horizontal Pod Autoscaler for Matching Engine
 apiVersion: autoscaling/v2
@@ -598,8 +409,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: matching-engine
-  minReplicas: 3
-  maxReplicas: 15
+  minReplicas: 2
+  maxReplicas: 8
   metrics:
   - type: Resource
     resource:
@@ -613,7 +424,6 @@ spec:
       target:
         type: Utilization
         averageUtilization: 70
-
 ---
 # Network Policy for security
 apiVersion: networking.k8s.io/v1
@@ -646,43 +456,3 @@ spec:
       port: 443
     - protocol: TCP
       port: 80
-
----
-# Ingress for external access
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: tigerex-ingress
-  namespace: tigerex
-  annotations:
-    kubernetes.io/ingress.class: nginx
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/rate-limit: "100"
-    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
-spec:
-  tls:
-  - hosts:
-    - api.tigerex.com
-    - app.tigerex.com
-    secretName: tigerex-tls
-  rules:
-  - host: api.tigerex.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: api-gateway-service
-            port:
-              number: 8080
-  - host: app.tigerex.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: frontend-service
-            port:
-              number: 3000
